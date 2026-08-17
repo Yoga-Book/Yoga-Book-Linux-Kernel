@@ -1,0 +1,124 @@
+version: '3'
+
+vars:
+  JOBS:
+    sh: nproc
+
+tasks:
+  default:
+    desc: Configure and build Yoga Book Debian kernel packages
+    cmds:
+      - task: build
+
+  build:dev:
+    desc: Build timestamped Yoga Book development Debian packages
+    cmds:
+      - task: build
+
+  build:prod:
+    desc: Build final Yoga Book production Debian packages without a timestamp
+    cmds:
+      - task: build
+        vars:
+          FINAL: 'true'
+
+  configure:
+    desc: Prepare .config for a Yoga Book kernel build
+    silent: true
+    env:
+      YOGABOOK_FINAL: '{{.FINAL | default "false"}}'
+    cmds:
+      - |
+        case "$YOGABOOK_FINAL" in
+          true)
+            local_version="-yogabook"
+            ;;
+          false)
+            build_timestamp="$(date +%Y%m%d-%H%M%S)"
+            local_version="-yogabook-$build_timestamp"
+            ;;
+          *)
+            echo "FINAL must be true or false" >&2
+            exit 1
+            ;;
+        esac
+
+        if [ ! -f .config ]; then
+          host_config="/boot/config-$(uname -r)"
+          if [ ! -f "$host_config" ]; then
+            echo "Installed kernel configuration not found: $host_config" >&2
+            exit 1
+          fi
+          cp "$host_config" .config
+        fi
+
+        scripts/config --module INPUT_DRV260X_HAPTICS
+        scripts/config --enable X86_ANDROID_TABLETS
+        scripts/config --module YOGABOOK
+        scripts/config --module SND_SOC_INTEL_CHT_YOGABOOK_MACH
+        scripts/config --module SND_SOC_RT5677
+        scripts/config --module SND_SOC_RT5677_SPI
+        scripts/config --module SND_SOC_TS3A227E
+        scripts/config --module IPU_BRIDGE
+        scripts/config --module VIDEO_OV2740
+        scripts/config --module VIDEO_OV8858
+        scripts/config --module VIDEO_WV517S
+        scripts/config --enable INTEL_ATOMISP
+        scripts/config --module VIDEO_ATOMISP
+        scripts/config --set-str SYSTEM_TRUSTED_KEYS ""
+        scripts/config --set-str SYSTEM_REVOCATION_KEYS ""
+        scripts/config --set-str LOCALVERSION "$local_version"
+        scripts/config --disable LOCALVERSION_AUTO
+        make olddefconfig
+        make syncconfig
+
+        require_config() {
+          if ! grep -qx "$1=$2" .config; then
+            echo "Required kernel option is missing: $1=$2" >&2
+            exit 1
+          fi
+        }
+
+        require_config CONFIG_INPUT_DRV260X_HAPTICS m
+        require_config CONFIG_X86_ANDROID_TABLETS y
+        require_config CONFIG_YOGABOOK m
+        require_config CONFIG_SND_SOC_INTEL_CHT_YOGABOOK_MACH m
+        require_config CONFIG_SND_SOC_RT5677 m
+        require_config CONFIG_SND_SOC_RT5677_SPI m
+        require_config CONFIG_SND_SOC_TS3A227E m
+        require_config CONFIG_IPU_BRIDGE m
+        require_config CONFIG_VIDEO_OV2740 m
+        require_config CONFIG_VIDEO_OV8858 m
+        require_config CONFIG_VIDEO_WV517S m
+        require_config CONFIG_INTEL_ATOMISP y
+        require_config CONFIG_VIDEO_ATOMISP m
+
+        kernel_release="$(make -s LOCALVERSION= kernelrelease)"
+        expected_release="7.2.0$local_version"
+        if [ "$kernel_release" != "$expected_release" ]; then
+          echo "Unexpected kernel release: $kernel_release (expected $expected_release)" >&2
+          exit 1
+        fi
+        echo "Kernel release: $kernel_release"
+
+  build:
+    desc: Build Yoga Book image and headers Debian packages
+    silent: true
+    deps:
+      - task: configure
+        vars:
+          FINAL: '{{.FINAL | default "false"}}'
+    env:
+      YOGABOOK_JOBS: '{{.JOBS}}'
+    cmds:
+      - |
+        case "$YOGABOOK_JOBS" in
+          ''|0|*[!0-9]*)
+            echo "JOBS must be a positive integer" >&2
+            exit 1
+            ;;
+        esac
+
+        PATH="/usr/lib/ccache:$PATH" \
+          make -j"$YOGABOOK_JOBS" --jobserver-style=pipe \
+          CC=gcc LOCALVERSION= bindeb-pkg
