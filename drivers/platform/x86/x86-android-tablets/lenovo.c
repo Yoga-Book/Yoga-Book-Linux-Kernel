@@ -138,9 +138,26 @@ static const struct software_node lenovo_yb1_x91_drv2604_1_node = {
 	.properties = lenovo_yb1_x91_drv2604_1_props,
 };
 
+static const struct software_node lenovo_yb1_x91_rt5677_node;
+
+static const struct property_entry lenovo_yb1_x91_rt5677_props[] = {
+	/* GPIO2 drives the second speaker amp; GPIO4 drives headphones. */
+	PROPERTY_ENTRY_GPIO("speaker-enable2-gpios",
+			    &lenovo_yb1_x91_rt5677_node, 2, GPIO_ACTIVE_HIGH),
+	PROPERTY_ENTRY_GPIO("headphone-enable-gpios",
+			    &lenovo_yb1_x91_rt5677_node, 4, GPIO_ACTIVE_HIGH),
+	{ }
+};
+
+static const struct software_node lenovo_yb1_x91_rt5677_node = {
+	.name = "rt5677",
+	.properties = lenovo_yb1_x91_rt5677_props,
+};
+
 static const struct software_node *lenovo_yb1_x91_swnodes[] = {
 	&lenovo_yb1_x91_drv2604_0_node,
 	&lenovo_yb1_x91_drv2604_1_node,
+	&lenovo_yb1_x91_rt5677_node,
 	NULL
 };
 
@@ -345,10 +362,46 @@ static const struct x86_i2c_client_info lenovo_yogabook_x91_i2c_clients[] __init
 	},
 };
 
+#define YB1_X91_RT5677_DEVICE "i2c-10EC5677:00"
 #define YB1_X91_DRV2604_0_DEVICE "i2c-DRV2604:00"
 #define YB1_X91_DRV2604_1_DEVICE "i2c-DRV2604:01"
 
+static struct device *lenovo_yb1_x91_rt5677_dev;
 static struct device *lenovo_yb1_x91_drv2604_devs[2];
+
+static void lenovo_yb1_x91_add_audio_props(struct device *dev)
+{
+	struct device *codec_dev;
+	int ret;
+
+	codec_dev = bus_find_device_by_name(&i2c_bus_type, NULL,
+					    YB1_X91_RT5677_DEVICE);
+	if (!codec_dev) {
+		dev_warn(dev, "cannot find %s, audio will be unavailable\n",
+			 YB1_X91_RT5677_DEVICE);
+		return;
+	}
+
+	ret = device_add_software_node(codec_dev, &lenovo_yb1_x91_rt5677_node);
+	if (ret) {
+		put_device(codec_dev);
+		dev_warn(dev, "failed to add properties to %s: %d\n",
+			 YB1_X91_RT5677_DEVICE, ret);
+		return;
+	}
+
+	lenovo_yb1_x91_rt5677_dev = codec_dev;
+}
+
+static void lenovo_yb1_x91_remove_audio_props(void)
+{
+	if (!lenovo_yb1_x91_rt5677_dev)
+		return;
+
+	device_remove_software_node(lenovo_yb1_x91_rt5677_dev);
+	put_device(lenovo_yb1_x91_rt5677_dev);
+	lenovo_yb1_x91_rt5677_dev = NULL;
+}
 
 static void lenovo_yb1_x91_add_haptics_props(struct device *dev, int index,
 					     const char *name)
@@ -392,6 +445,7 @@ static void lenovo_yb1_x91_remove_haptics_props(int index)
 
 static int __init lenovo_yb1_x91_init(struct device *dev)
 {
+	lenovo_yb1_x91_add_audio_props(dev);
 	lenovo_yb1_x91_add_haptics_props(dev, 0, YB1_X91_DRV2604_0_DEVICE);
 	lenovo_yb1_x91_add_haptics_props(dev, 1, YB1_X91_DRV2604_1_DEVICE);
 
@@ -402,6 +456,7 @@ static void lenovo_yb1_x91_exit(void)
 {
 	lenovo_yb1_x91_remove_haptics_props(1);
 	lenovo_yb1_x91_remove_haptics_props(0);
+	lenovo_yb1_x91_remove_audio_props();
 }
 
 const struct x86_dev_info lenovo_yogabook_x91_info __initconst = {
