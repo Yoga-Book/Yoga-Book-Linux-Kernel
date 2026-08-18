@@ -19,15 +19,6 @@ require_config() {
 	fi
 }
 
-require_config_disabled() {
-	local symbol=$1
-
-	if ! grep -Fqx "# $symbol is not set" "$config_file"; then
-		echo "Required kernel option is enabled: $symbol" >&2
-		exit 1
-	fi
-}
-
 require_config CONFIG_X86_ANDROID_TABLETS y
 require_config CONFIG_YOGABOOK m
 
@@ -48,13 +39,13 @@ require_config CONFIG_HID_WACOM m
 require_config CONFIG_I2C_HID_ACPI m
 require_config CONFIG_INPUT_DRV260X_HAPTICS m
 
-# The RT5677 machine entry names intel/fw_sst_22a8.bin and intentionally has
-# no sof-cht-rt5677 topology. Require the ACPI SST frontend, not just its
-# selected core, and reject the global preference which would make SOF claim
-# the Cherry Trail DSP before SST can create the cht-yogabook sound card.
+# Prefer SOF for the RT5677 topology while retaining the complete SST ACPI
+# frontend for explicit fallback testing with snd_intel_dspcfg.dsp_driver=2.
 require_config CONFIG_SND_SST_ATOM_HIFI2_PLATFORM m
 require_config CONFIG_SND_SST_ATOM_HIFI2_PLATFORM_ACPI m
-require_config_disabled CONFIG_SND_INTEL_BYT_PREFER_SOF
+require_config CONFIG_SND_SOC_SOF_BAYTRAIL m
+require_config CONFIG_SND_SOC_SOF_IPC3 y
+require_config CONFIG_SND_INTEL_BYT_PREFER_SOF y
 require_config CONFIG_SND_SOC_INTEL_CHT_YOGABOOK_MACH m
 require_config CONFIG_SND_SOC_RT5677 m
 require_config CONFIG_SND_SOC_RT5677_SPI m
