@@ -64,11 +64,12 @@ scripts/config --module HID_WACOM
 scripts/config --module I2C_HID_ACPI
 scripts/config --module INPUT_DRV260X_HAPTICS
 
-# RT5677 uses intel/fw_sst_22a8.bin through the legacy Cherry Trail SST ACPI
-# frontend. There is no published sof-cht-rt5677 topology, so never inherit
-# Ubuntu's SOF preference here. Other SOF modules remain available.
+# Prefer SOF for the RT5677 now that sof-cht-rt5677.tplg is available. Keep the
+# legacy Cherry Trail SST ACPI frontend as an explicit fallback selected with
+# snd_intel_dspcfg.dsp_driver=2.
 scripts/config --module SND_SST_ATOM_HIFI2_PLATFORM_ACPI
-scripts/config --disable SND_INTEL_BYT_PREFER_SOF
+scripts/config --module SND_SOC_SOF_BAYTRAIL
+scripts/config --enable SND_INTEL_BYT_PREFER_SOF
 scripts/config --module SND_SOC_INTEL_CHT_YOGABOOK_MACH
 scripts/config --module SND_SOC_RT5677
 scripts/config --module SND_SOC_RT5677_SPI
