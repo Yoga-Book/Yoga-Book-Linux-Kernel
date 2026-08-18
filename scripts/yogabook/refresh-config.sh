@@ -64,8 +64,11 @@ scripts/config --module HID_WACOM
 scripts/config --module I2C_HID_ACPI
 scripts/config --module INPUT_DRV260X_HAPTICS
 
-# RT5677 audio codec, SPI control and TS3A227E jack detection.
-scripts/config --module SND_SST_ATOM_HIFI2_PLATFORM
+# RT5677 uses intel/fw_sst_22a8.bin through the legacy Cherry Trail SST ACPI
+# frontend. There is no published sof-cht-rt5677 topology, so never inherit
+# Ubuntu's SOF preference here. Other SOF modules remain available.
+scripts/config --module SND_SST_ATOM_HIFI2_PLATFORM_ACPI
+scripts/config --disable SND_INTEL_BYT_PREFER_SOF
 scripts/config --module SND_SOC_INTEL_CHT_YOGABOOK_MACH
 scripts/config --module SND_SOC_RT5677
 scripts/config --module SND_SOC_RT5677_SPI
