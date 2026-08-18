@@ -22,6 +22,53 @@ tasks:
         vars:
           FINAL: 'true'
 
+  build:setup:
+    desc: Install kernel build tools on Ubuntu 24.04 or 26.04
+    silent: true
+    cmds:
+      - |
+        if [ ! -r /etc/os-release ]; then
+          echo "Cannot identify the operating system: /etc/os-release is unavailable" >&2
+          exit 1
+        fi
+
+        . /etc/os-release
+        if [ "${ID:-}" != ubuntu ]; then
+          echo "Unsupported operating system: ${PRETTY_NAME:-unknown}" >&2
+          echo "build:setup supports Ubuntu 24.04 and Ubuntu 26.04 only" >&2
+          exit 1
+        fi
+
+        case "${VERSION_ID:-}" in
+          24.04)
+            ubuntu_release="Ubuntu 24.04 LTS"
+            ;;
+          26.04)
+            ubuntu_release="Ubuntu 26.04 LTS"
+            ;;
+          *)
+            echo "Unsupported Ubuntu version: ${VERSION_ID:-unknown}" >&2
+            echo "build:setup supports Ubuntu 24.04 and Ubuntu 26.04 only" >&2
+            exit 1
+            ;;
+        esac
+
+        set -- \
+          bc bison build-essential ccache cpio debhelper dwarves fakeroot flex \
+          git kmod libdw-dev libelf-dev libssl-dev python3 rsync zstd
+
+        echo "Configuring the kernel build tools for $ubuntu_release"
+        if [ "$(id -u)" -eq 0 ]; then
+          apt-get update
+          apt-get install --yes --no-install-recommends "$@"
+        elif command -v sudo >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends "$@"
+        else
+          echo "sudo is required to install the kernel build tools" >&2
+          exit 1
+        fi
+
   config:refresh:
     desc: Refresh the versioned config from the pinned official Ubuntu generic config
     cmds:
