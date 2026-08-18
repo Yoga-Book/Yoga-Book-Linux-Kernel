@@ -49,11 +49,11 @@ tasks:
         esac
 
         make yogabook_x91l_defconfig
-        # The Yoga Book RT5677 machine has an SST firmware path but no
-        # published SOF topology. Keep SOF available for other hardware while
-        # making automatic Bay/Cherry Trail selection choose legacy SST.
+        # Prefer SOF now that the Yoga Book has an IPC3 topology. Keep the
+        # legacy SST ACPI frontend available for explicit fallback testing.
         scripts/config --module SND_SST_ATOM_HIFI2_PLATFORM_ACPI
-        scripts/config --disable SND_INTEL_BYT_PREFER_SOF
+        scripts/config --module SND_SOC_SOF_BAYTRAIL
+        scripts/config --enable SND_INTEL_BYT_PREFER_SOF
         scripts/config --set-str SYSTEM_TRUSTED_KEYS ""
         scripts/config --set-str SYSTEM_REVOCATION_KEYS ""
         scripts/config --set-str LOCALVERSION "$local_version"
