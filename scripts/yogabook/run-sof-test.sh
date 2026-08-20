@@ -40,7 +40,7 @@ collect_results() {
 	local expected_firmware_checksum=$3
 	local temporary_log work_dir kernel_log audio_kernel_log trace_log capture_wav
 	local running_release dsp_driver card_number card_id_file
-	local topology_checksum firmware_checksum ucm_version device output_file
+	local topology_checksum firmware_checksum ucm_version device output_file trace_source
 	local automated_result=PASS
 	local sof_selected=false
 
@@ -49,6 +49,7 @@ collect_results() {
 	kernel_log=$work_dir/kernel-journal.log
 	audio_kernel_log=$work_dir/kernel-audio.log
 	trace_log=$work_dir/sof-trace.log
+	: >"$trace_log"
 	capture_wav=$work_dir/mic1.wav
 	running_release=$(uname -r)
 	dsp_driver=unavailable
@@ -197,13 +198,14 @@ collect_results() {
 		echo
 
 		echo '== UCM import and devices =='
-		if alsaucm -c yogabook list _verbs >"$work_dir/ucm-verbs.log" 2>&1; then
+		if alsaucm -c hw:yogabook list _verbs >"$work_dir/ucm-verbs.log" 2>&1; then
 			cat "$work_dir/ucm-verbs.log"
 		else
 			cat "$work_dir/ucm-verbs.log"
 			mark_fail "alsaucm could not import the yogabook configuration"
 		fi
-		if alsaucm -c yogabook list _devices >"$work_dir/ucm-devices.log" 2>&1; then
+		if alsaucm -c hw:yogabook set _verb HiFi list _devices \
+			>"$work_dir/ucm-devices.log" 2>&1; then
 			cat "$work_dir/ucm-devices.log"
 			for device in Speaker1 Headphones Mic1 Headset; do
 				grep -Fq "$device" "$work_dir/ucm-devices.log" ||
@@ -221,7 +223,8 @@ collect_results() {
 		if [[ -n $card_number ]]; then
 			device="hw:$card_number,0"
 			run_check "enable HiFi Speaker1 and Mic1 routes" \
-				alsaucm -c yogabook set _verb HiFi set _enadev Speaker1 set _enadev Mic1
+				alsaucm -c hw:yogabook set _verb HiFi \
+				set _enadev Speaker1 set _enadev Mic1
 
 			echo '== Direct PCM0 transport matrix =='
 			for format in S16_LE S24_LE S32_LE; do
@@ -273,11 +276,22 @@ PY
 		echo '== SOF debugfs and firmware trace =='
 		if [[ -d /sys/kernel/debug/sof ]]; then
 			find /sys/kernel/debug/sof -maxdepth 2 -printf '%M %s %p\n' 2>&1 || true
-			if [[ -r /sys/kernel/debug/sof/trace ]]; then
-				timeout 5 head -c 1048576 /sys/kernel/debug/sof/trace >"$trace_log" 2>&1 || true
+			trace_source=""
+			for output_file in /sys/kernel/debug/sof/trace /sys/kernel/debug/sof/etrace; do
+				if [[ -r $output_file ]]; then
+					trace_source=$output_file
+					break
+				fi
+			done
+			if [[ -n $trace_source ]]; then
+				echo "SOF trace source: $trace_source"
+				timeout 5 head -c 1048576 "$trace_source" >"$trace_log" 2>&1 || true
+				if [[ ! -s $trace_log ]]; then
+					echo 'SOF trace is empty (no firmware trace records).'
+				fi
 				cat "$trace_log"
 			else
-				mark_fail "SOF firmware trace is unavailable"
+				mark_fail "SOF trace and error trace are unavailable"
 			fi
 		else
 			mark_fail "SOF debugfs directory is unavailable"
