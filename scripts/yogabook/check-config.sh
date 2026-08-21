@@ -21,6 +21,7 @@ require_config() {
 
 require_config CONFIG_X86_ANDROID_TABLETS y
 require_config CONFIG_YOGABOOK m
+require_config CONFIG_INTEL_CHT_MODEM y
 
 require_config CONFIG_DRM y
 require_config CONFIG_DRM_I915 m
