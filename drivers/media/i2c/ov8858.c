@@ -3,6 +3,7 @@
  * Copyright (C) 2023 Jacopo Mondi <jacopo.mondi@ideasonboard.com>
  * Copyright (C) 2022 Nicholas Roth <nicholas@rothemail.net>
  * Copyright (C) 2017 Fuzhou Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2017 Intel Corporation.
  */
 
 #include <linux/acpi.h>
@@ -60,14 +61,22 @@
 #define OV8858_LONG_GAIN_STEP		1
 #define OV8858_LONG_GAIN_DEFAULT	0x80
 
+#define OV8858_REG_MWB_RED_GAIN		OV8858_REG_16BIT(0x5032)
+#define OV8858_REG_MWB_GREEN_GAIN	OV8858_REG_16BIT(0x5034)
+#define OV8858_REG_MWB_BLUE_GAIN	OV8858_REG_16BIT(0x5036)
+#define OV8858_MWB_GAIN_MIN		0x400
+#define OV8858_MWB_GAIN_MAX		0xfff
+#define OV8858_MWB_GAIN_DEFAULT		0x400
+
 #define OV8858_REG_LONG_DIGIGAIN	OV8858_REG_16BIT(0x350a)
 #define OV8858_LONG_DIGIGAIN_H_MASK	0x3fc0
 #define OV8858_LONG_DIGIGAIN_L_MASK	0x3f
 #define OV8858_LONG_DIGIGAIN_H_SHIFT	2
 #define OV8858_LONG_DIGIGAIN_MIN	0x0
 #define OV8858_LONG_DIGIGAIN_MAX	0x3fff
-#define OV8858_LONG_DIGIGAIN_STEP	1
 #define OV8858_LONG_DIGIGAIN_DEFAULT	0x200
+
+#define OV8858_DIGITAL_GAIN_STEP	1
 
 #define OV8858_REG_VTS			OV8858_REG_16BIT(0x380e)
 #define OV8858_VTS_MAX			0x7fff
@@ -124,20 +133,37 @@ struct ov8858 {
 };
 
 /*
- * Lenovo's sensor table for a 19.2 MHz input and 360 MHz CSI-2 link.
- * Apply this after the otherwise reusable 24 MHz mode table.
+ * Cherry Trail MRD production settings for a 19.2 MHz input and 360 MHz
+ * CSI-2 link. Apply these after the otherwise reusable 24 MHz mode table.
+ *
+ * Besides the corrected sensor/MIPI PLL divisors, keep the final common
+ * black-level settings here. The per-mode tables retain their resolution
+ * dependent black-column anchors and window sizes.
  */
-static const struct regval ov8858_pll_19_2mhz[] = {
-	{0x0300, 0x05},
-	{0x0302, 0xaf},
+static const struct regval ov8858_cht_mrd_19_2mhz[] = {
+	{0x0300, 0x00},
+	{0x0302, 0x27},
 	{0x0303, 0x00},
 	{0x0304, 0x03},
-	{0x030b, 0x02},
-	{0x030d, 0x4e},
+	{0x030b, 0x00},
+	{0x030d, 0x27},
 	{0x030e, 0x00},
 	{0x030f, 0x04},
 	{0x0312, 0x01},
 	{0x031e, 0x0c},
+	{0x3f08, 0x08},
+	{0x400a, 0x01},
+	{0x400d, 0x10},
+	{0x4011, 0x20},
+	{0x403e, 0x08},
+	{0x4040, 0x07},
+	{0x4041, 0xc6},
+	{0x4202, 0x00},
+	{0x4500, 0x58},
+	{0x470b, 0x28},
+	{0x4837, 0x15},
+	{0x58f4, 0x32},
+	{0x58f8, 0x3d},
 	{REG_NULL, 0x00},
 };
 
@@ -1367,7 +1393,8 @@ static int ov8858_start_stream(struct ov8858 *ov8858,
 
 	/* The mode tables contain PLL settings for a 24 MHz input clock. */
 	if (ov8858->xvclk_rate == OV8858_XVCLK_FREQ_19_2MHZ) {
-		ret = ov8858_write_array(ov8858, ov8858_pll_19_2mhz);
+		ret = ov8858_write_array(ov8858,
+					 ov8858_cht_mrd_19_2mhz);
 		if (ret)
 			return ret;
 	}
@@ -1550,6 +1577,31 @@ static int ov8858_enable_test_pattern(struct ov8858 *ov8858, u32 pattern)
 	return ov8858_write(ov8858, OV8858_REG_TEST_PATTERN, val, NULL);
 }
 
+static int ov8858_set_digital_gain(struct ov8858 *ov8858, u32 gain)
+{
+	u16 long_gain;
+	int ret;
+
+	if (ov8858->xvclk_rate != OV8858_XVCLK_FREQ_19_2MHZ) {
+		long_gain = (gain & OV8858_LONG_DIGIGAIN_L_MASK) |
+			    ((gain & OV8858_LONG_DIGIGAIN_H_MASK) <<
+			     OV8858_LONG_DIGIGAIN_H_SHIFT);
+
+		return ov8858_write(ov8858, OV8858_REG_LONG_DIGIGAIN,
+				    long_gain, NULL);
+	}
+
+	ret = ov8858_write(ov8858, OV8858_REG_MWB_RED_GAIN, gain, NULL);
+	if (ret)
+		return ret;
+
+	ret = ov8858_write(ov8858, OV8858_REG_MWB_GREEN_GAIN, gain, NULL);
+	if (ret)
+		return ret;
+
+	return ov8858_write(ov8858, OV8858_REG_MWB_BLUE_GAIN, gain, NULL);
+}
+
 static int ov8858_set_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct ov8858 *ov8858 = container_of(ctrl->handler,
@@ -1558,7 +1610,6 @@ static int ov8858_set_ctrl(struct v4l2_ctrl *ctrl)
 	struct i2c_client *client = v4l2_get_subdevdata(&ov8858->subdev);
 	struct v4l2_mbus_framefmt *format;
 	struct v4l2_subdev_state *state;
-	u16 digi_gain;
 	s64 max_exp;
 	int ret;
 
@@ -1597,17 +1648,7 @@ static int ov8858_set_ctrl(struct v4l2_ctrl *ctrl)
 				   ctrl->val, NULL);
 		break;
 	case V4L2_CID_DIGITAL_GAIN:
-		/*
-		 * Digital gain is assembled as:
-		 * 0x350a[7:0] = dgain[13:6]
-		 * 0x350b[5:0] = dgain[5:0]
-		 * Reassemble the control value to write it in one go.
-		 */
-		digi_gain = (ctrl->val & OV8858_LONG_DIGIGAIN_L_MASK)
-			  | ((ctrl->val & OV8858_LONG_DIGIGAIN_H_MASK) <<
-			      OV8858_LONG_DIGIGAIN_H_SHIFT);
-		ret = ov8858_write(ov8858, OV8858_REG_LONG_DIGIGAIN,
-				   digi_gain, NULL);
+		ret = ov8858_set_digital_gain(ov8858, ctrl->val);
 		break;
 	case V4L2_CID_VBLANK:
 		ret = ov8858_write(ov8858, OV8858_REG_VTS,
@@ -1721,6 +1762,9 @@ static int ov8858_init_ctrls(struct ov8858 *ov8858)
 	struct v4l2_ctrl_handler *handler = &ov8858->ctrl_handler;
 	const struct ov8858_mode *mode = &ov8858_modes[0];
 	struct v4l2_fwnode_device_properties props;
+	u32 digital_gain_default = OV8858_LONG_DIGIGAIN_DEFAULT;
+	u32 digital_gain_max = OV8858_LONG_DIGIGAIN_MAX;
+	u32 digital_gain_min = OV8858_LONG_DIGIGAIN_MIN;
 	s64 exposure_max, vblank_def;
 	unsigned int pixel_rate;
 	struct v4l2_ctrl *ctrl;
@@ -1764,10 +1808,16 @@ static int ov8858_init_ctrls(struct ov8858 *ov8858)
 			  OV8858_LONG_GAIN_MIN, OV8858_LONG_GAIN_MAX,
 			  OV8858_LONG_GAIN_STEP, OV8858_LONG_GAIN_DEFAULT);
 
+	if (ov8858->xvclk_rate == OV8858_XVCLK_FREQ_19_2MHZ) {
+		digital_gain_min = OV8858_MWB_GAIN_MIN;
+		digital_gain_max = OV8858_MWB_GAIN_MAX;
+		digital_gain_default = OV8858_MWB_GAIN_DEFAULT;
+	}
+
 	v4l2_ctrl_new_std(handler, &ov8858_ctrl_ops, V4L2_CID_DIGITAL_GAIN,
-			  OV8858_LONG_DIGIGAIN_MIN, OV8858_LONG_DIGIGAIN_MAX,
-			  OV8858_LONG_DIGIGAIN_STEP,
-			  OV8858_LONG_DIGIGAIN_DEFAULT);
+			  digital_gain_min, digital_gain_max,
+			  OV8858_DIGITAL_GAIN_STEP,
+			  digital_gain_default);
 
 	v4l2_ctrl_new_std_menu_items(handler, &ov8858_ctrl_ops,
 				     V4L2_CID_TEST_PATTERN,
