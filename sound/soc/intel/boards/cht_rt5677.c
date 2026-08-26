@@ -32,7 +32,6 @@
 
 struct cht_rt5677_private {
 	char codec_name[SND_ACPI_I2C_ID_LEN];
-	struct snd_soc_jack jack;
 	struct clk *mclk;
 	struct gpio_desc *gpio_spk_en1;
 	struct gpio_desc *gpio_spk_en2;
@@ -284,10 +283,13 @@ static struct snd_soc_jack_pin cht_rt5677_jack_pins[] = {
 static int cht_rt5677_headset_init(struct snd_soc_component *component)
 {
 	struct snd_soc_card *card = component->card;
-	struct cht_rt5677_private *ctx = snd_soc_card_get_drvdata(card);
-	struct snd_soc_jack *jack = &ctx->jack;
+	struct snd_soc_jack *jack;
 	int jack_type;
 	int ret;
+
+	jack = devm_kzalloc(card->dev, sizeof(*jack), GFP_KERNEL);
+	if (!jack)
+		return -ENOMEM;
 
 	/*
 	 * TI supports four headset buttons:
