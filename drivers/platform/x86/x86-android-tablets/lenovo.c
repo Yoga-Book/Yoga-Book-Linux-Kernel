@@ -130,9 +130,23 @@ static const struct property_entry lenovo_yb1_x91_drv2604_1_props[] = {
 	{ }
 };
 
-static const struct property_entry * const lenovo_yb1_x91_drv2604_props[] = {
-	lenovo_yb1_x91_drv2604_0_props,
-	lenovo_yb1_x91_drv2604_1_props,
+static const struct software_node lenovo_yb1_x91_drv2604_0_node = {
+	.properties = lenovo_yb1_x91_drv2604_0_props,
+};
+
+static const struct software_node lenovo_yb1_x91_drv2604_1_node = {
+	.properties = lenovo_yb1_x91_drv2604_1_props,
+};
+
+static const struct software_node *lenovo_yb1_x91_swnodes[] = {
+	&lenovo_yb1_x91_drv2604_0_node,
+	&lenovo_yb1_x91_drv2604_1_node,
+	NULL
+};
+
+static const struct software_node * const lenovo_yb1_x91_drv2604_nodes[] = {
+	&lenovo_yb1_x91_drv2604_0_node,
+	&lenovo_yb1_x91_drv2604_1_node,
 };
 
 static const struct property_entry lenovo_yb1_ts3a227e_props[] = {
@@ -358,9 +372,8 @@ static void lenovo_yb1_x91_add_haptics_props(struct device *dev, int index,
 		return;
 	}
 
-	ret = device_create_managed_software_node(haptics_dev,
-						  lenovo_yb1_x91_drv2604_props[index],
-						  NULL);
+	ret = device_add_software_node(haptics_dev,
+				       lenovo_yb1_x91_drv2604_nodes[index]);
 	if (ret) {
 		put_device(haptics_dev);
 		dev_warn(dev, "failed to add properties to %s: %d\n", name, ret);
@@ -407,6 +420,7 @@ static void lenovo_yb1_x91_exit(void)
 const struct x86_dev_info lenovo_yogabook_x91_info __initconst = {
 	.i2c_client_info = lenovo_yogabook_x91_i2c_clients,
 	.i2c_client_count = ARRAY_SIZE(lenovo_yogabook_x91_i2c_clients),
+	.swnode_group = lenovo_yb1_x91_swnodes,
 	.gpiochip_type = X86_GPIOCHIP_CHERRYVIEW,
 	.init = lenovo_yb1_x91_init,
 	.exit = lenovo_yb1_x91_exit,

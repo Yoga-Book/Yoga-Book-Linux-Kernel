@@ -536,6 +536,7 @@ static int atomisp_enum_framesizes(struct file *file, void *priv,
 		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
 		.code = input->code,
 	};
+	const struct atomisp_format_bridge *format;
 	struct v4l2_subdev_state *act_sd_state;
 	struct v4l2_area padding = {
 		.width = pad_w,
@@ -544,6 +545,9 @@ static int atomisp_enum_framesizes(struct file *file, void *priv,
 	int ret;
 
 	if (!input->sensor)
+		return -EINVAL;
+	format = atomisp_get_format_bridge(fsize->pixel_format);
+	if (!format)
 		return -EINVAL;
 
 	if (input->crop_support)
@@ -557,8 +561,12 @@ static int atomisp_enum_framesizes(struct file *file, void *priv,
 	if (ret)
 		return ret;
 
-	if (input->padding_override)
+	if (format->sh_fmt == IA_CSS_FRAME_FORMAT_RAW) {
+		padding.width = 0;
+		padding.height = 0;
+	} else if (input->padding_override) {
 		padding = input->padding;
+	}
 
 	fsize->type = V4L2_FRMSIZE_TYPE_DISCRETE;
 	fsize->discrete.width = fse.max_width - padding.width;
