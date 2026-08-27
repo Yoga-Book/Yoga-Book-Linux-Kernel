@@ -181,6 +181,7 @@
  * @work: Work item used to off load the enable/disable of the vibration
  * @enable_gpio: Pointer to the gpio used for enable/disabling
  * @regulator: Pointer to the regulator for the IC
+ * @suspended: Whether force-feedback work must remain quiesced
  * @magnitude: Magnitude of the vibration event
  * @mode: The operating mode of the IC (LRA_NO_CAL, ERM or LRA)
  * @library: The vibration library to be used
@@ -194,6 +195,7 @@ struct drv260x_data {
 	struct work_struct work;
 	struct gpio_desc *enable_gpio;
 	struct regulator *regulator;
+	bool suspended;
 	u8 magnitude;
 	u32 mode;
 	u32 library;
@@ -213,6 +215,13 @@ struct drv260x_data {
 static int drv260x_calculate_voltage(unsigned int voltage)
 {
 	return (voltage * 255 / 5600);
+}
+
+static void drv260x_set_suspended(struct drv260x_data *haptics,
+				  bool suspended)
+{
+	scoped_guard(spinlock_irqsave, &haptics->input_dev->event_lock)
+		haptics->suspended = suspended;
 }
 
 static void drv260x_worker(struct work_struct *work)
@@ -242,6 +251,9 @@ static int drv260x_haptics_play(struct input_dev *input, void *data,
 				struct ff_effect *effect)
 {
 	struct drv260x_data *haptics = input_get_drvdata(input);
+
+	if (haptics->suspended)
+		return 0;
 
 	haptics->mode = DRV260X_LRA_NO_CAL_MODE;
 
@@ -434,13 +446,6 @@ static const struct regmap_config drv260x_regmap_config = {
 	.cache_type = REGCACHE_NONE,
 };
 
-/* ACPI DRV2604 devices describe enable as their first GPIO resource. */
-static const struct acpi_gpio_params drv260x_enable_gpio = { 0, 0, false };
-static const struct acpi_gpio_mapping drv260x_acpi_gpios[] = {
-	{ "enable-gpios", &drv260x_enable_gpio, 1 },
-	{ }
-};
-
 static void drv260x_power_off(void *data)
 {
 	struct drv260x_data *haptics = data;
@@ -454,14 +459,6 @@ static int drv260x_probe(struct i2c_client *client)
 	struct drv260x_data *haptics;
 	u32 voltage;
 	int error;
-
-	if (has_acpi_companion(dev)) {
-		error = devm_acpi_dev_add_driver_gpios(dev,
-						       drv260x_acpi_gpios);
-		if (error)
-			return dev_err_probe(dev, error,
-					     "Failed to add ACPI GPIO mapping\n");
-	}
 
 	haptics = devm_kzalloc(dev, sizeof(*haptics), GFP_KERNEL);
 	if (!haptics)
@@ -514,26 +511,22 @@ static int drv260x_probe(struct i2c_client *client)
 	haptics->overdrive_voltage = error ? DRV260X_DEF_OD_CLAMP_VOLT :
 					     drv260x_calculate_voltage(voltage);
 
-	haptics->regulator = devm_regulator_get_optional(dev, "vbat");
+	haptics->regulator = devm_regulator_get(dev, "vbat");
 	if (IS_ERR(haptics->regulator)) {
-		if (PTR_ERR(haptics->regulator) == -ENODEV) {
-			haptics->regulator = NULL;
-			dev_dbg(dev, "No vbat regulator found\n");
-		} else {
-			error = PTR_ERR(haptics->regulator);
-			return dev_err_probe(dev, error, "Unable to get vbat regulator\n");
-		}
+		error = PTR_ERR(haptics->regulator);
+		dev_err(dev, "unable to get regulator, error: %d\n", error);
+		return error;
 	}
 
-	if (haptics->regulator) {
-		error = regulator_enable(haptics->regulator);
-		if (error)
-			return dev_err_probe(dev, error, "Failed to enable regulator\n");
-
-		error = devm_add_action_or_reset(dev, drv260x_power_off, haptics);
-		if (error)
-			return error;
+	error = regulator_enable(haptics->regulator);
+	if (error) {
+		dev_err(dev, "Failed to enable regulator: %d\n", error);
+		return error;
 	}
+
+	error = devm_add_action_or_reset(dev, drv260x_power_off, haptics);
+	if (error)
+		return error;
 
 	haptics->enable_gpio = devm_gpiod_get_optional(dev, "enable",
 						       GPIOD_OUT_HIGH);
@@ -588,31 +581,39 @@ static int drv260x_probe(struct i2c_client *client)
 static int drv260x_suspend(struct device *dev)
 {
 	struct drv260x_data *haptics = dev_get_drvdata(dev);
-	int error;
+	int error, restore_error;
 
 	guard(mutex)(&haptics->input_dev->mutex);
 
 	if (input_device_enabled(haptics->input_dev)) {
+		drv260x_set_suspended(haptics, true);
+		cancel_work_sync(&haptics->work);
+
 		error = regmap_update_bits(haptics->regmap,
 					   DRV260X_MODE,
 					   DRV260X_STANDBY_MASK,
 					   DRV260X_STANDBY);
 		if (error) {
 			dev_err(dev, "Failed to set standby mode\n");
+			drv260x_set_suspended(haptics, false);
 			return error;
 		}
 
 		gpiod_set_value(haptics->enable_gpio, 0);
 
-		if (haptics->regulator) {
-			error = regulator_disable(haptics->regulator);
-			if (error) {
-				dev_err(dev, "Failed to disable regulator\n");
-				regmap_update_bits(haptics->regmap,
-						   DRV260X_MODE,
-						   DRV260X_STANDBY_MASK, 0);
-				return error;
-			}
+		error = regulator_disable(haptics->regulator);
+		if (error) {
+			dev_err(dev, "Failed to disable regulator\n");
+
+			gpiod_set_value(haptics->enable_gpio, 1);
+			usleep_range(250, 500);
+			restore_error = drv260x_init(haptics);
+			if (restore_error)
+				dev_err(dev, "Failed to restore configuration: %d\n",
+					restore_error);
+
+			drv260x_set_suspended(haptics, false);
+			return error;
 		}
 	}
 
@@ -627,25 +628,24 @@ static int drv260x_resume(struct device *dev)
 	guard(mutex)(&haptics->input_dev->mutex);
 
 	if (input_device_enabled(haptics->input_dev)) {
-		if (haptics->regulator) {
-			error = regulator_enable(haptics->regulator);
-			if (error) {
-				dev_err(dev, "Failed to enable regulator\n");
-				return error;
-			}
-		}
-
-		error = regmap_update_bits(haptics->regmap,
-					   DRV260X_MODE,
-					   DRV260X_STANDBY_MASK, 0);
+		error = regulator_enable(haptics->regulator);
 		if (error) {
-			dev_err(dev, "Failed to unset standby mode\n");
-			if (haptics->regulator)
-				regulator_disable(haptics->regulator);
+			dev_err(dev, "Failed to enable regulator\n");
 			return error;
 		}
 
 		gpiod_set_value(haptics->enable_gpio, 1);
+		usleep_range(250, 500);
+
+		error = drv260x_init(haptics);
+		if (error) {
+			dev_err(dev, "Failed to restore configuration: %d\n", error);
+			gpiod_set_value(haptics->enable_gpio, 0);
+			regulator_disable(haptics->regulator);
+			return error;
+		}
+
+		drv260x_set_suspended(haptics, false);
 	}
 
 	return 0;

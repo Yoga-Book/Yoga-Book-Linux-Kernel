@@ -741,21 +741,17 @@ static int ov2740_identify_module(struct ov2740 *ov2740)
 
 static int ov2740_update_mwb_gains(struct ov2740 *ov2740)
 {
-	u32 green_gain = ov2740->digital_gain->val;
-	u32 red_gain, blue_gain;
+	u32 blue_gain, green_gain, red_gain;
 	int end_ret, launch_ret, ret;
 
 	/* Balance controls use 1024 as unity relative to the digital gain. */
-	red_gain = min_t(u64,
-			 DIV_ROUND_CLOSEST_ULL((u64)green_gain *
-					       ov2740->red_balance->val,
-					       OV2740_DGTL_GAIN_DEFAULT),
-			 OV2740_DGTL_GAIN_MAX);
-	blue_gain = min_t(u64,
-			  DIV_ROUND_CLOSEST_ULL((u64)green_gain *
-						ov2740->blue_balance->val,
-						OV2740_DGTL_GAIN_DEFAULT),
-			  OV2740_DGTL_GAIN_MAX);
+	green_gain = ov2740->digital_gain->val;
+	red_gain = DIV_ROUND_CLOSEST(green_gain * ov2740->red_balance->val,
+				     OV2740_DGTL_GAIN_DEFAULT);
+	red_gain = min(red_gain, OV2740_DGTL_GAIN_MAX);
+	blue_gain = DIV_ROUND_CLOSEST(green_gain * ov2740->blue_balance->val,
+				      OV2740_DGTL_GAIN_DEFAULT);
+	blue_gain = min(blue_gain, OV2740_DGTL_GAIN_MAX);
 
 	ret = ov2740_write_reg(ov2740, OV2740_REG_GROUP_ACCESS, 1,
 			       OV2740_GROUP_HOLD_START);
@@ -913,6 +909,7 @@ static int ov2740_init_controls(struct ov2740 *ov2740)
 				  V4L2_CID_BLUE_BALANCE,
 				  1, OV2740_DGTL_GAIN_MAX, 1,
 				  OV2740_DGTL_GAIN_DEFAULT);
+	v4l2_ctrl_cluster(3, &ov2740->digital_gain);
 	exposure_max = ov2740->cur_mode->vts_def - OV2740_EXPOSURE_MAX_MARGIN;
 	ov2740->exposure = v4l2_ctrl_new_std(ctrl_hdlr, &ov2740_ctrl_ops,
 					     V4L2_CID_EXPOSURE,
@@ -1582,11 +1579,10 @@ static DEFINE_RUNTIME_DEV_PM_OPS(ov2740_pm_ops, ov2740_suspend, ov2740_resume,
 				 NULL);
 
 static const struct acpi_device_id ov2740_acpi_ids[] = {
-	{"INT3474"},
-	{"OVTI2740"},
-	{}
+	{ .id = "INT3474" },
+	{ .id = "OVTI2740" },
+	{ }
 };
-
 MODULE_DEVICE_TABLE(acpi, ov2740_acpi_ids);
 
 static struct i2c_driver ov2740_i2c_driver = {
