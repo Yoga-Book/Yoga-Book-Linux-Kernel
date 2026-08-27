@@ -12,13 +12,14 @@
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 #include <linux/unaligned.h>
+#include <linux/units.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-fwnode.h>
 
-#define OV2740_LINK_FREQ_360MHZ		360000000ULL
-#define OV2740_LINK_FREQ_288MHZ		288000000ULL
-#define OV2740_LINK_FREQ_180MHZ		180000000ULL
+#define OV2740_LINK_FREQ_360MHZ		(360ULL * HZ_PER_MHZ)
+#define OV2740_LINK_FREQ_288MHZ		(288ULL * HZ_PER_MHZ)
+#define OV2740_LINK_FREQ_180MHZ		(180ULL * HZ_PER_MHZ)
 #define OV2740_SCLK			72000000LL
 #define OV2740_MCLK			19200000
 #define OV2740_DATA_LANES		2
@@ -132,14 +133,14 @@ struct ov2740_mode {
 	/* Link frequency needed for this resolution */
 	u32 link_freq_index;
 
+	/* Bayer order produced by this mode */
+	u32 code;
+
 	/* Optional common settings applied before the mode-specific settings */
 	const struct ov2740_reg_list init_reg_list;
 
 	/* Sensor register settings for this resolution */
 	const struct ov2740_reg_list reg_list;
-
-	/* Bayer order produced by this mode */
-	u32 code;
 };
 
 static const struct ov2740_reg mipi_data_rate_720mbps[] = {

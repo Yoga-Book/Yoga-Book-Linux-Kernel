@@ -3572,10 +3572,13 @@ void atomisp_get_padding(struct atomisp_device *isp, u32 width, u32 height,
 	u32 min_pad_w = ISP2400_MIN_PAD_W;
 	u32 min_pad_h = ISP2400_MIN_PAD_H;
 	struct v4l2_mbus_framefmt *sink;
-	u32 input_padding_w = input->padding_override ?
-			      input->padding_w : pad_w;
-	u32 input_padding_h = input->padding_override ?
-			      input->padding_h : pad_h;
+	u32 input_padding_w = pad_w;
+	u32 input_padding_h = pad_h;
+
+	if (input->padding_override) {
+		input_padding_w = input->padding.width;
+		input_padding_h = input->padding.height;
+	}
 
 	if (!input->crop_support) {
 		*padding_w = input_padding_w;
@@ -3810,9 +3813,7 @@ int atomisp_try_fmt(struct atomisp_device *isp, struct v4l2_pix_format *f,
 	int ret;
 
 	fmt = atomisp_get_format_bridge(f->pixelformat);
-	/* Raw output remains opt-in while the legacy CSS path is validated. */
-	if (!fmt || (fmt->sh_fmt == IA_CSS_FRAME_FORMAT_RAW &&
-		     !atomisp_allow_raw_output)) {
+	if (!fmt) {
 		f->pixelformat = V4L2_PIX_FMT_YUV420;
 
 		fmt = atomisp_get_format_bridge(f->pixelformat);
