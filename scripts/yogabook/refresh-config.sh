@@ -39,9 +39,15 @@ fi
 
 cp "$ubuntu_config" .config
 
+# Keep Ubuntu's generic Cadence MACB modules buildable. Their helpers currently
+# sit inside the kernel's CONFIG_OF block while their probe calls are
+# unconditional.
+scripts/config --enable OF
+
 # Platform enumeration and Yoga Book mode/backlight control.
 scripts/config --enable X86_ANDROID_TABLETS
 scripts/config --module YOGABOOK
+scripts/config --enable INTEL_CHT_MODEM
 
 # Display and LPSS PWM. Modular i915 plus built-in LPSS PWM matches the
 # physically working generic-kernel arrangement on the YB1-X91L.
@@ -70,7 +76,7 @@ scripts/config --module INPUT_DRV260X_HAPTICS
 scripts/config --module SND_SST_ATOM_HIFI2_PLATFORM_ACPI
 scripts/config --module SND_SOC_SOF_BAYTRAIL
 scripts/config --enable SND_INTEL_BYT_PREFER_SOF
-scripts/config --module SND_SOC_INTEL_CHT_YOGABOOK_MACH
+scripts/config --module SND_SOC_INTEL_CHT_RT5677_MACH
 scripts/config --module SND_SOC_RT5677
 scripts/config --module SND_SOC_RT5677_SPI
 scripts/config --module SND_SOC_TS3A227E
