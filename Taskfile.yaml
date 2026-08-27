@@ -96,11 +96,16 @@ tasks:
         esac
 
         make yogabook_x91l_defconfig
+        # Keep Ubuntu's generic Cadence MACB modules buildable. Their helpers
+        # currently sit inside the kernel's CONFIG_OF block while their probe
+        # calls are unconditional.
+        scripts/config --enable OF
         # Prefer SOF now that the Yoga Book has an IPC3 topology. Keep the
         # legacy SST ACPI frontend available for explicit fallback testing.
         scripts/config --module SND_SST_ATOM_HIFI2_PLATFORM_ACPI
         scripts/config --module SND_SOC_SOF_BAYTRAIL
         scripts/config --enable SND_INTEL_BYT_PREFER_SOF
+        scripts/config --module SND_SOC_INTEL_CHT_RT5677_MACH
         scripts/config --enable INTEL_CHT_MODEM
         scripts/config --set-str SYSTEM_TRUSTED_KEYS ""
         scripts/config --set-str SYSTEM_REVOCATION_KEYS ""
