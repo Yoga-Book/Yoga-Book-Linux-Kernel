@@ -22,6 +22,7 @@ require_config() {
 require_config CONFIG_X86_ANDROID_TABLETS y
 require_config CONFIG_YOGABOOK m
 require_config CONFIG_INTEL_CHT_MODEM y
+require_config CONFIG_OF y
 
 require_config CONFIG_DRM y
 require_config CONFIG_DRM_I915 m
@@ -47,7 +48,7 @@ require_config CONFIG_SND_SST_ATOM_HIFI2_PLATFORM_ACPI m
 require_config CONFIG_SND_SOC_SOF_BAYTRAIL m
 require_config CONFIG_SND_SOC_SOF_IPC3 y
 require_config CONFIG_SND_INTEL_BYT_PREFER_SOF y
-require_config CONFIG_SND_SOC_INTEL_CHT_YOGABOOK_MACH m
+require_config CONFIG_SND_SOC_INTEL_CHT_RT5677_MACH m
 require_config CONFIG_SND_SOC_RT5677 m
 require_config CONFIG_SND_SOC_RT5677_SPI m
 require_config CONFIG_SND_SOC_TS3A227E m
