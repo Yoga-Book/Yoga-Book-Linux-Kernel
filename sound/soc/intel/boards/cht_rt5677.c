@@ -2,7 +2,7 @@
 /*
  *  cht_rt5677.c - ASoC machine driver for Cherry Trail with RT5677
  *
- *  Copyright (C) 2019 Yauhen Kharuzhy <jekhor@gmail.com>
+ *  Copyright (C) 2026 Yauhen Kharuzhy <jekhor@gmail.com>
  *
  *  Based on the mainline cht_bsw_rt5672.c driver and Lenovo's
  *  cht_bl_dpcm_rt5677.c Android driver.
@@ -264,6 +264,7 @@ static int cht_rt5677_codec_fixup(struct snd_soc_pcm_runtime *rtd,
 	 * Configure SSP2 for the 24-bit format expected by the codec. The SST
 	 * ssp2-port front end still advertises S16_LE and converts the stream.
 	 */
+	snd_mask_none(hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT));
 	params_set_format(params, SNDRV_PCM_FORMAT_S24_LE);
 
 	return 0;

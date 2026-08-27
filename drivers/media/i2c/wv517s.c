@@ -4,16 +4,13 @@
  * WV517S voice-coil motor driver
  *
  * Copyright (c) 2014 Intel Corporation.
- *
- * On the Lenovo Yoga Book the IPU bridge instantiates this actuator as a
- * secondary I2C client of the rear camera.  The bridge holds the sensor's
- * shared power resources on while probing the actuator and adds a runtime-PM
- * device link for subsequent accesses.
+ * Copyright (C) 2026 Maurizio Casciano <mauriziocasciano7@gmail.com>
  */
 
 #include <linux/i2c.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
+#include <linux/regmap.h>
 
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
@@ -28,7 +25,8 @@
 struct wv517s_device {
 	struct v4l2_ctrl_handler ctrl_handler;
 	struct v4l2_subdev sd;
-	struct v4l2_ctrl *focus;
+	struct regmap *regmap;
+	bool resuming;
 };
 
 static inline struct wv517s_device *to_wv517s(struct v4l2_subdev *sd)
@@ -36,36 +34,37 @@ static inline struct wv517s_device *to_wv517s(struct v4l2_subdev *sd)
 	return container_of(sd, struct wv517s_device, sd);
 }
 
-static int wv517s_write(struct i2c_client *client, u8 reg, u16 value)
-{
-	u8 buf[] = { reg, value >> 8, value };
-	int ret;
-
-	ret = i2c_master_send(client, buf, sizeof(buf));
-	if (ret < 0)
-		return ret;
-
-	return ret == sizeof(buf) ? 0 : -EIO;
-}
+static const struct regmap_config wv517s_regmap_config = {
+	.reg_bits = 8,
+	.val_bits = 16,
+	.max_register = WV517S_REG_DRIVE_MODE,
+	.val_format_endian = REGMAP_ENDIAN_BIG,
+};
 
 static int wv517s_set_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct wv517s_device *wv517s = container_of(ctrl->handler,
 						      struct wv517s_device,
 						      ctrl_handler);
-	struct i2c_client *client = v4l2_get_subdevdata(&wv517s->sd);
+	struct device *dev = wv517s->sd.dev;
+	int pm_ret;
 	int ret;
 
-	ret = pm_runtime_get_if_in_use(&client->dev);
-	if (ret <= 0)
-		return ret;
+	/* Runtime resume restores controls while the PM state is RPM_RESUMING. */
+	pm_ret = pm_runtime_get_if_active(dev);
+	if (!pm_ret && !wv517s->resuming)
+		return 0;
+	if (pm_ret < 0)
+		return pm_ret;
 
 	if (ctrl->id == V4L2_CID_FOCUS_ABSOLUTE)
-		ret = wv517s_write(client, WV517S_REG_FOCUS, ctrl->val);
+		ret = regmap_write(wv517s->regmap, WV517S_REG_FOCUS,
+				   ctrl->val);
 	else
 		ret = -EINVAL;
 
-	pm_runtime_put(&client->dev);
+	if (pm_ret > 0)
+		pm_runtime_put(dev);
 
 	return ret;
 }
@@ -97,16 +96,19 @@ static int wv517s_resume(struct device *dev)
 {
 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
 	struct wv517s_device *wv517s = to_wv517s(sd);
-	struct i2c_client *client = to_i2c_client(dev);
 	int ret;
 
 	/* Restore the vendor-recommended 12.6 ms ringing-control mode. */
-	ret = wv517s_write(client, WV517S_REG_DRIVE_MODE,
+	ret = regmap_write(wv517s->regmap, WV517S_REG_DRIVE_MODE,
 			   WV517S_DRIVE_MODE_12_6_MS);
 	if (ret)
 		return ret;
 
-	return wv517s_write(client, WV517S_REG_FOCUS, wv517s->focus->val);
+	wv517s->resuming = true;
+	ret = v4l2_ctrl_handler_setup(&wv517s->ctrl_handler);
+	wv517s->resuming = false;
+
+	return ret;
 }
 
 static int wv517s_probe(struct i2c_client *client)
@@ -118,17 +120,21 @@ static int wv517s_probe(struct i2c_client *client)
 	if (!wv517s)
 		return -ENOMEM;
 
+	wv517s->regmap = devm_regmap_init_i2c(client, &wv517s_regmap_config);
+	if (IS_ERR(wv517s->regmap))
+		return dev_err_probe(&client->dev, PTR_ERR(wv517s->regmap),
+				     "failed to initialize regmap\n");
+
 	v4l2_i2c_subdev_init(&wv517s->sd, client, &wv517s_subdev_ops);
 	wv517s->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 	wv517s->sd.internal_ops = &wv517s_internal_ops;
 	wv517s->sd.entity.function = MEDIA_ENT_F_LENS;
 
 	v4l2_ctrl_handler_init(&wv517s->ctrl_handler, 1);
-	wv517s->focus = v4l2_ctrl_new_std(&wv517s->ctrl_handler,
-					  &wv517s_ctrl_ops,
-					  V4L2_CID_FOCUS_ABSOLUTE, 0,
-					  WV517S_MAX_FOCUS_POSITION, 1,
-					  WV517S_DEFAULT_FOCUS_POSITION);
+	v4l2_ctrl_new_std(&wv517s->ctrl_handler, &wv517s_ctrl_ops,
+			  V4L2_CID_FOCUS_ABSOLUTE, 0,
+			  WV517S_MAX_FOCUS_POSITION, 1,
+			  WV517S_DEFAULT_FOCUS_POSITION);
 	if (wv517s->ctrl_handler.error) {
 		ret = wv517s->ctrl_handler.error;
 		goto err_free_ctrl_handler;
@@ -139,12 +145,12 @@ static int wv517s_probe(struct i2c_client *client)
 	if (ret)
 		goto err_free_ctrl_handler;
 
-	ret = wv517s_resume(&client->dev);
-	if (ret)
-		goto err_cleanup_entity;
-
 	pm_runtime_set_active(&client->dev);
 	pm_runtime_enable(&client->dev);
+
+	ret = wv517s_resume(&client->dev);
+	if (ret)
+		goto err_disable_pm;
 
 	ret = v4l2_async_register_subdev(&wv517s->sd);
 	if (ret)
@@ -156,7 +162,6 @@ static int wv517s_probe(struct i2c_client *client)
 
 err_disable_pm:
 	pm_runtime_disable(&client->dev);
-err_cleanup_entity:
 	media_entity_cleanup(&wv517s->sd.entity);
 err_free_ctrl_handler:
 	v4l2_ctrl_handler_free(&wv517s->ctrl_handler);
@@ -194,6 +199,6 @@ static struct i2c_driver wv517s_i2c_driver = {
 };
 module_i2c_driver(wv517s_i2c_driver);
 
-MODULE_AUTHOR("Maurizio Casciano");
+MODULE_AUTHOR("Maurizio Casciano <mauriziocasciano7@gmail.com>");
 MODULE_DESCRIPTION("WV517S VCM driver");
 MODULE_LICENSE("GPL");

@@ -6,10 +6,10 @@
  * Copyright (c) 2017 Intel Corporation.
  */
 
-#include <linux/acpi.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/device.h>
+#include <linux/device-id/acpi.h>
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
@@ -19,6 +19,7 @@
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 #include <linux/unaligned.h>
+#include <linux/units.h>
 
 #include <media/media-entity.h>
 #include <media/v4l2-async.h>
@@ -29,9 +30,9 @@
 #include <media/v4l2-mediabus.h>
 #include <media/v4l2-subdev.h>
 
-#define OV8858_LINK_FREQ		360000000U
-#define OV8858_XVCLK_FREQ_19_2MHZ	19200000
-#define OV8858_XVCLK_FREQ_24MHZ		24000000
+#define OV8858_LINK_FREQ		(360 * HZ_PER_MHZ)
+#define OV8858_XVCLK_FREQ_19_2MHZ	(192 * HZ_PER_MHZ / 10)
+#define OV8858_XVCLK_FREQ_24MHZ		(24 * HZ_PER_MHZ)
 
 #define OV8858_REG_SIZE_SHIFT		16
 #define OV8858_REG_ADDR_MASK		0xffff
@@ -66,6 +67,7 @@
 #define OV8858_REG_MWB_BLUE_GAIN	OV8858_REG_16BIT(0x5036)
 #define OV8858_MWB_GAIN_MIN		0x400
 #define OV8858_MWB_GAIN_MAX		0xfff
+#define OV8858_MWB_GAIN_STEP		1
 #define OV8858_MWB_GAIN_DEFAULT		0x400
 
 #define OV8858_REG_LONG_DIGIGAIN	OV8858_REG_16BIT(0x350a)
@@ -74,9 +76,8 @@
 #define OV8858_LONG_DIGIGAIN_H_SHIFT	2
 #define OV8858_LONG_DIGIGAIN_MIN	0x0
 #define OV8858_LONG_DIGIGAIN_MAX	0x3fff
+#define OV8858_LONG_DIGIGAIN_STEP	1
 #define OV8858_LONG_DIGIGAIN_DEFAULT	0x200
-
-#define OV8858_DIGITAL_GAIN_STEP	1
 
 #define OV8858_REG_VTS			OV8858_REG_16BIT(0x380e)
 #define OV8858_VTS_MAX			0x7fff
@@ -101,6 +102,33 @@ struct regval {
 struct regval_modes {
 	const struct regval *mode_2lanes;
 	const struct regval *mode_4lanes;
+};
+
+struct ov8858_gain_range {
+	u32 min;
+	u32 max;
+	u32 step;
+	u32 def;
+};
+
+enum ov8858_xvclk_index {
+	OV8858_XVCLK_24MHZ,
+	OV8858_XVCLK_19_2MHZ,
+};
+
+static const struct ov8858_gain_range ov8858_digital_gain_ranges[] = {
+	[OV8858_XVCLK_24MHZ] = {
+		.min = OV8858_LONG_DIGIGAIN_MIN,
+		.max = OV8858_LONG_DIGIGAIN_MAX,
+		.step = OV8858_LONG_DIGIGAIN_STEP,
+		.def = OV8858_LONG_DIGIGAIN_DEFAULT,
+	},
+	[OV8858_XVCLK_19_2MHZ] = {
+		.min = OV8858_MWB_GAIN_MIN,
+		.max = OV8858_MWB_GAIN_MAX,
+		.step = OV8858_MWB_GAIN_STEP,
+		.def = OV8858_MWB_GAIN_DEFAULT,
+	},
 };
 
 struct ov8858_mode {
@@ -1393,8 +1421,7 @@ static int ov8858_start_stream(struct ov8858 *ov8858,
 
 	/* The mode tables contain PLL settings for a 24 MHz input clock. */
 	if (ov8858->xvclk_rate == OV8858_XVCLK_FREQ_19_2MHZ) {
-		ret = ov8858_write_array(ov8858,
-					 ov8858_cht_mrd_19_2mhz);
+		ret = ov8858_write_array(ov8858, ov8858_cht_mrd_19_2mhz);
 		if (ret)
 			return ret;
 	}
@@ -1702,7 +1729,7 @@ static int ov8858_power_on(struct ov8858 *ov8858)
 	 * transaction, but a double sleep between the release of gpios
 	 * helps with sporadic failures observed at probe time.
 	 */
-	delay_us = DIV_ROUND_UP(8192, ov8858->xvclk_rate / 1000 / 1000);
+	delay_us = DIV_ROUND_UP(8192, ov8858->xvclk_rate / HZ_PER_MHZ);
 
 	gpiod_set_value_cansleep(ov8858->reset_gpio, 0);
 	fsleep(delay_us);
@@ -1760,12 +1787,11 @@ static int ov8858_init_ctrls(struct ov8858 *ov8858)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&ov8858->subdev);
 	struct v4l2_ctrl_handler *handler = &ov8858->ctrl_handler;
+	const struct ov8858_gain_range *digital_gain_range;
 	const struct ov8858_mode *mode = &ov8858_modes[0];
 	struct v4l2_fwnode_device_properties props;
-	u32 digital_gain_default = OV8858_LONG_DIGIGAIN_DEFAULT;
-	u32 digital_gain_max = OV8858_LONG_DIGIGAIN_MAX;
-	u32 digital_gain_min = OV8858_LONG_DIGIGAIN_MIN;
 	s64 exposure_max, vblank_def;
+	unsigned int xvclk_index;
 	unsigned int pixel_rate;
 	struct v4l2_ctrl *ctrl;
 	u32 h_blank;
@@ -1808,16 +1834,12 @@ static int ov8858_init_ctrls(struct ov8858 *ov8858)
 			  OV8858_LONG_GAIN_MIN, OV8858_LONG_GAIN_MAX,
 			  OV8858_LONG_GAIN_STEP, OV8858_LONG_GAIN_DEFAULT);
 
-	if (ov8858->xvclk_rate == OV8858_XVCLK_FREQ_19_2MHZ) {
-		digital_gain_min = OV8858_MWB_GAIN_MIN;
-		digital_gain_max = OV8858_MWB_GAIN_MAX;
-		digital_gain_default = OV8858_MWB_GAIN_DEFAULT;
-	}
-
+	xvclk_index = ov8858->xvclk_rate == OV8858_XVCLK_FREQ_19_2MHZ ?
+		OV8858_XVCLK_19_2MHZ : OV8858_XVCLK_24MHZ;
+	digital_gain_range = &ov8858_digital_gain_ranges[xvclk_index];
 	v4l2_ctrl_new_std(handler, &ov8858_ctrl_ops, V4L2_CID_DIGITAL_GAIN,
-			  digital_gain_min, digital_gain_max,
-			  OV8858_DIGITAL_GAIN_STEP,
-			  digital_gain_default);
+			  digital_gain_range->min, digital_gain_range->max,
+			  digital_gain_range->step, digital_gain_range->def);
 
 	v4l2_ctrl_new_std_menu_items(handler, &ov8858_ctrl_ops,
 				     V4L2_CID_TEST_PATTERN,
@@ -2056,23 +2078,23 @@ static void ov8858_remove(struct i2c_client *client)
 	pm_runtime_set_suspended(&client->dev);
 }
 
+static const struct acpi_device_id ov8858_acpi_match[] = {
+	{ .id = "INT3477" },
+	{ }
+};
+MODULE_DEVICE_TABLE(acpi, ov8858_acpi_match);
+
 static const struct of_device_id ov8858_of_match[] = {
 	{ .compatible = "ovti,ov8858" },
 	{ /* sentinel */ },
 };
 MODULE_DEVICE_TABLE(of, ov8858_of_match);
 
-static const struct acpi_device_id ov8858_acpi_match[] = {
-	{ "INT3477" },
-	{ /* sentinel */ },
-};
-MODULE_DEVICE_TABLE(acpi, ov8858_acpi_match);
-
 static struct i2c_driver ov8858_i2c_driver = {
 	.driver = {
 		.name = "ov8858",
 		.pm = &ov8858_pm_ops,
-		.acpi_match_table = ACPI_PTR(ov8858_acpi_match),
+		.acpi_match_table = ov8858_acpi_match,
 		.of_match_table = ov8858_of_match,
 	},
 	.probe		= ov8858_probe,
