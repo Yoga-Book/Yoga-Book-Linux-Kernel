@@ -15,6 +15,7 @@
 #include <linux/dmi.h>
 #include <linux/platform_data/x86/int3472.h>
 #include <linux/property.h>
+#include <linux/units.h>
 
 #include <media/ipu-bridge.h>
 #include <media/v4l2-fwnode.h>
@@ -43,14 +44,16 @@ static const guid_t vcm_dsm_guid =
 		  0x9f, 0x48, 0xa9, 0xc3, 0xb5, 0xda, 0x78, 0x9f);
 
 struct atomisp_sensor_config {
+	u64 link_freq;
 	int lanes;
 	bool vcm;
 };
 
-#define ATOMISP_SENSOR_CONFIG(_HID, _LANES, _VCM)			\
+#define ATOMISP_SENSOR_CONFIG(_HID, _LANES, _VCM, _LINK_FREQ)	\
 {									\
 	.id = _HID,							\
 	.driver_data = (long)&((const struct atomisp_sensor_config) {	\
+		.link_freq = _LINK_FREQ,				\
 		.lanes = _LANES,					\
 		.vcm = _VCM,						\
 	})								\
@@ -77,8 +80,6 @@ static struct gmin_cfg_var lenovo_ideapad_miix_310_vars[] = {
 static struct gmin_cfg_var lenovo_yogabook_x91_vars[] = {
 	/* The vendor driver and sensor modes use two CSI data lanes. */
 	{ "OVTI2740:00", "CsiLanes", "2" },
-	/* The vendor 1932x1092 mode uses a 576 Mbps two-lane link. */
-	{ "OVTI2740:00", "CsiLinkFreq", "288000000" },
 	/* Crop the vendor mode's 1932x1092 transport frame to 1920x1080. */
 	{ "OVTI2740:00", "CsiPaddingWidth", "12" },
 	{ "OVTI2740:00", "CsiPaddingHeight", "12" },
@@ -212,47 +213,38 @@ out_use_default:
 	return default_val;
 }
 
-bool atomisp_csi2_get_sensor_padding(struct device *dev, u32 *padding_w,
-				     u32 *padding_h)
+static u32 atomisp_csi2_get_padding_value(struct acpi_device *adev,
+					  const char *key, u32 default_val)
 {
-	struct acpi_device *adev = ACPI_COMPANION(dev);
-	bool override = false;
-	char *str_val;
-	unsigned int val;
+	int val;
 
-	*padding_w = pad_w;
-	*padding_h = pad_h;
+	val = gmin_cfg_get_int(adev, key, default_val);
+	if (val >= 0 && val <= 64 && !(val & 1))
+		return val;
 
+	acpi_handle_warn(adev->handle, "%s: Invalid %s=%d\n",
+			 dev_name(&adev->dev), key, val);
+	return default_val;
+}
+
+bool atomisp_csi2_get_sensor_padding(struct device *dev,
+				     struct v4l2_area *padding)
+{
+	struct acpi_device *adev;
+
+	padding->width = pad_w;
+	padding->height = pad_h;
+
+	adev = ACPI_COMPANION(dev);
 	if (!adev)
 		return false;
 
-	str_val = gmin_cfg_get(adev, "CsiPaddingWidth");
-	if (str_val) {
-		if (!kstrtouint(str_val, 0, &val) && val <= 64 && !(val & 1)) {
-			*padding_w = val;
-			override = true;
-		} else {
-			acpi_handle_warn(adev->handle,
-					 "%s: Invalid CSI padding width %s\n",
-					 dev_name(dev), str_val);
-		}
-		kfree(str_val);
-	}
+	padding->width = atomisp_csi2_get_padding_value(adev,
+							"CsiPaddingWidth", pad_w);
+	padding->height = atomisp_csi2_get_padding_value(adev,
+							 "CsiPaddingHeight", pad_h);
 
-	str_val = gmin_cfg_get(adev, "CsiPaddingHeight");
-	if (str_val) {
-		if (!kstrtouint(str_val, 0, &val) && val <= 64 && !(val & 1)) {
-			*padding_h = val;
-			override = true;
-		} else {
-			acpi_handle_warn(adev->handle,
-					 "%s: Invalid CSI padding height %s\n",
-					 dev_name(dev), str_val);
-		}
-		kfree(str_val);
-	}
-
-	return override;
+	return padding->width != pad_w || padding->height != pad_h;
 }
 
 static int atomisp_csi2_get_pmc_clk_nr_from_acpi_pr0(struct acpi_device *adev)
@@ -421,9 +413,10 @@ static const struct acpi_device_id atomisp_sensor_configs[] = {
 	 * the sensor fails to start streaming when instantiating
 	 * an i2c-client for the VCM, so it is disabled for now.
 	 */
-	ATOMISP_SENSOR_CONFIG("INT33BE", 2, false),	/* OV5693 */
-	ATOMISP_SENSOR_CONFIG("INT3477", 4, true),	/* OV8858 */
-	ATOMISP_SENSOR_CONFIG("OVTI2740", 2, false),	/* OV2740 */
+	ATOMISP_SENSOR_CONFIG("INT33BE", 2, false, 0),	/* OV5693 */
+	ATOMISP_SENSOR_CONFIG("INT3477", 4, true, 0),	/* OV8858 */
+	/* OV2740 */
+	ATOMISP_SENSOR_CONFIG("OVTI2740", 2, false, 288 * HZ_PER_MHZ),
 	{}
 };
 
@@ -431,8 +424,6 @@ static int atomisp_csi2_parse_sensor_fwnode(struct acpi_device *adev,
 					    struct ipu_sensor *sensor)
 {
 	const struct acpi_device_id *id;
-	char *link_freq_str;
-	unsigned long long link_freq;
 	int ret, clock_num;
 	bool vcm = false;
 	int lanes = 1;
@@ -444,6 +435,10 @@ static int atomisp_csi2_parse_sensor_fwnode(struct acpi_device *adev,
 
 		lanes = cfg->lanes;
 		vcm = cfg->vcm;
+		if (cfg->link_freq) {
+			sensor->link_freqs[0] = cfg->link_freq;
+			sensor->nr_link_freqs = 1;
+		}
 	}
 
 	/*
@@ -470,21 +465,6 @@ static int atomisp_csi2_parse_sensor_fwnode(struct acpi_device *adev,
 		acpi_handle_err(adev->handle, "%s: Invalid lane-count: %d\n",
 				dev_name(&adev->dev), sensor->lanes);
 		return -EINVAL;
-	}
-
-	link_freq_str = gmin_cfg_get(adev, "CsiLinkFreq");
-	if (link_freq_str) {
-		ret = kstrtoull(link_freq_str, 0, &link_freq);
-		kfree(link_freq_str);
-		if (ret || !link_freq) {
-			acpi_handle_err(adev->handle,
-					"%s: Invalid CSI link frequency\n",
-					dev_name(&adev->dev));
-			return ret ?: -EINVAL;
-		}
-
-		sensor->link_freqs[0] = link_freq;
-		sensor->nr_link_freqs = 1;
 	}
 
 	ret = atomisp_csi2_add_gpio_mappings(adev);

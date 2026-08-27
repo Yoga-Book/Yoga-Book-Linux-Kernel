@@ -73,11 +73,6 @@ int pad_h = 16;
 module_param(pad_h, int, 0644);
 MODULE_PARM_DESC(pad_h, "extra data for ISP processing");
 
-bool atomisp_allow_raw_output;
-module_param_named(allow_raw_output, atomisp_allow_raw_output, bool, 0644);
-MODULE_PARM_DESC(allow_raw_output,
-		 "allow experimental raw Bayer output (default:false)");
-
 /*
  * FIXME: this is a hack to make easier to support ISP2401 variant.
  * As a given system will either be ISP2401 or not, we can just use
@@ -897,12 +892,11 @@ static void atomisp_init_sensor(struct atomisp_input_subdev *input)
 
 	input->padding_override =
 		atomisp_csi2_get_sensor_padding(input->sensor->dev,
-						&input->padding_w,
-						&input->padding_h);
+						&input->padding);
 	if (input->padding_override)
 		dev_info(input->sensor->dev,
 			 "using ISP input padding %ux%u\n",
-			 input->padding_w, input->padding_h);
+			 input->padding.width, input->padding.height);
 
 	/*
 	 * FIXME: Drivers are not supposed to use __v4l2_subdev_state_alloc()

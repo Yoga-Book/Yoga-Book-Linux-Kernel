@@ -99,8 +99,6 @@
 
 #define ATOMISP_CSS_OUTPUT_SECOND_INDEX     1
 
-extern bool atomisp_allow_raw_output;
-
 #define ATOMISP_CSS_OUTPUT_DEFAULT_INDEX    0
 
 /* ISP2401 */
@@ -119,8 +117,7 @@ extern bool atomisp_allow_raw_output;
 struct atomisp_input_subdev {
 	enum atomisp_camera_port port;
 	u32 code; /* MEDIA_BUS_FMT_* */
-	u32 padding_w;
-	u32 padding_h;
+	struct v4l2_area padding;
 	bool padding_override;
 	bool binning_support;
 	bool crop_support;
