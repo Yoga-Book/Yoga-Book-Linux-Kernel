@@ -181,7 +181,9 @@
  * @work: Work item used to off load the enable/disable of the vibration
  * @enable_gpio: Pointer to the gpio used for enable/disabling
  * @regulator: Pointer to the regulator for the IC
+ * @calibration_valid: Whether calibration results have been cached
  * @magnitude: Magnitude of the vibration event
+ * @calibration_data: Cached automatic calibration results
  * @mode: The operating mode of the IC (LRA_NO_CAL, ERM or LRA)
  * @library: The vibration library to be used
  * @rated_voltage: The rated_voltage of the actuator
@@ -194,7 +196,9 @@ struct drv260x_data {
 	struct work_struct work;
 	struct gpio_desc *enable_gpio;
 	struct regulator *regulator;
+	bool calibration_valid;
 	u8 magnitude;
+	u8 calibration_data[3];
 	u32 mode;
 	u32 library;
 	int rated_voltage;
@@ -242,8 +246,6 @@ static int drv260x_haptics_play(struct input_dev *input, void *data,
 				struct ff_effect *effect)
 {
 	struct drv260x_data *haptics = input_get_drvdata(input);
-
-	haptics->mode = DRV260X_LRA_NO_CAL_MODE;
 
 	/* Scale u16 magnitude into u8 register value */
 	if (effect->u.rumble.strong_magnitude > 0)
@@ -338,9 +340,9 @@ static int drv260x_init(struct drv260x_data *haptics)
 
 	switch (haptics->mode) {
 	case DRV260X_LRA_MODE:
-		error = regmap_register_patch(haptics->regmap,
-					      drv260x_lra_cal_regs,
-					      ARRAY_SIZE(drv260x_lra_cal_regs));
+		error = regmap_multi_reg_write(haptics->regmap,
+					       drv260x_lra_cal_regs,
+					       ARRAY_SIZE(drv260x_lra_cal_regs));
 		if (error) {
 			dev_err(&haptics->client->dev,
 				"Failed to write LRA calibration registers: %d\n",
@@ -351,9 +353,9 @@ static int drv260x_init(struct drv260x_data *haptics)
 		break;
 
 	case DRV260X_ERM_MODE:
-		error = regmap_register_patch(haptics->regmap,
-					      drv260x_erm_cal_regs,
-					      ARRAY_SIZE(drv260x_erm_cal_regs));
+		error = regmap_multi_reg_write(haptics->regmap,
+					       drv260x_erm_cal_regs,
+					       ARRAY_SIZE(drv260x_erm_cal_regs));
 		if (error) {
 			dev_err(&haptics->client->dev,
 				"Failed to write ERM calibration registers: %d\n",
@@ -374,9 +376,9 @@ static int drv260x_init(struct drv260x_data *haptics)
 		break;
 
 	default:
-		error = regmap_register_patch(haptics->regmap,
-					      drv260x_lra_init_regs,
-					      ARRAY_SIZE(drv260x_lra_init_regs));
+		error = regmap_multi_reg_write(haptics->regmap,
+					       drv260x_lra_init_regs,
+					       ARRAY_SIZE(drv260x_lra_init_regs));
 		if (error) {
 			dev_err(&haptics->client->dev,
 				"Failed to write LRA init registers: %d\n",
@@ -397,6 +399,11 @@ static int drv260x_init(struct drv260x_data *haptics)
 		/* No need to set GO bit here */
 		return 0;
 	}
+
+	if (haptics->calibration_valid)
+		return regmap_bulk_write(haptics->regmap, DRV260X_CAL_COMP,
+					 haptics->calibration_data,
+					 ARRAY_SIZE(haptics->calibration_data));
 
 	error = regmap_write(haptics->regmap, DRV260X_GO, DRV260X_GO_BIT);
 	if (error) {
@@ -423,7 +430,28 @@ static int drv260x_init(struct drv260x_data *haptics)
 		}
 	} while (cal_buf == DRV260X_GO_BIT);
 
-	return 0;
+	error = regmap_bulk_read(haptics->regmap, DRV260X_CAL_COMP,
+				 haptics->calibration_data,
+				 ARRAY_SIZE(haptics->calibration_data));
+	if (!error)
+		haptics->calibration_valid = true;
+
+	return error;
+}
+
+static int drv260x_open(struct input_dev *input)
+{
+	struct drv260x_data *haptics = input_get_drvdata(input);
+	int error;
+
+	gpiod_set_value(haptics->enable_gpio, 1);
+	usleep_range(250, 500);
+
+	error = drv260x_init(haptics);
+	if (error)
+		gpiod_set_value(haptics->enable_gpio, 0);
+
+	return error;
 }
 
 static const struct regmap_config drv260x_regmap_config = {
@@ -528,6 +556,7 @@ static int drv260x_probe(struct i2c_client *client)
 	}
 
 	haptics->input_dev->name = "drv260x:haptics";
+	haptics->input_dev->open = drv260x_open;
 	haptics->input_dev->close = drv260x_close;
 	input_set_drvdata(haptics->input_dev, haptics);
 	input_set_capability(haptics->input_dev, EV_FF, FF_RUMBLE);
