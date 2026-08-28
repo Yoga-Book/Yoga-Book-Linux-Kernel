@@ -182,7 +182,9 @@
  * @enable_gpio: Pointer to the gpio used for enable/disabling
  * @regulator: Pointer to the regulator for the IC
  * @suspended: Whether force-feedback work must remain quiesced
+ * @calibration_valid: Whether calibration results have been cached
  * @magnitude: Magnitude of the vibration event
+ * @calibration_data: Cached automatic calibration results
  * @mode: The operating mode of the IC (LRA_NO_CAL, ERM or LRA)
  * @library: The vibration library to be used
  * @rated_voltage: The rated_voltage of the actuator
@@ -196,7 +198,9 @@ struct drv260x_data {
 	struct gpio_desc *enable_gpio;
 	struct regulator *regulator;
 	bool suspended;
+	bool calibration_valid;
 	u8 magnitude;
+	u8 calibration_data[3];
 	u32 mode;
 	u32 library;
 	int rated_voltage;
@@ -408,6 +412,11 @@ static int drv260x_init(struct drv260x_data *haptics)
 		return 0;
 	}
 
+	if (haptics->calibration_valid)
+		return regmap_bulk_write(haptics->regmap, DRV260X_CAL_COMP,
+					 haptics->calibration_data,
+					 ARRAY_SIZE(haptics->calibration_data));
+
 	error = regmap_write(haptics->regmap, DRV260X_GO, DRV260X_GO_BIT);
 	if (error) {
 		dev_err(&haptics->client->dev,
@@ -433,7 +442,13 @@ static int drv260x_init(struct drv260x_data *haptics)
 		}
 	} while (cal_buf == DRV260X_GO_BIT);
 
-	return 0;
+	error = regmap_bulk_read(haptics->regmap, DRV260X_CAL_COMP,
+				 haptics->calibration_data,
+				 ARRAY_SIZE(haptics->calibration_data));
+	if (!error)
+		haptics->calibration_valid = true;
+
+	return error;
 }
 
 static int drv260x_open(struct input_dev *input)
