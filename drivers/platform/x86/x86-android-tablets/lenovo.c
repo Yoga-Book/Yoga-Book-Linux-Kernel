@@ -390,6 +390,12 @@ static void lenovo_yb1_x91_add_audio_props(struct device *dev)
 		return;
 	}
 
+	/* Ensure the codec GPIO provider is initialized with the new fwnode. */
+	ret = device_reprobe(codec_dev);
+	if (ret)
+		dev_warn(dev, "failed to reprobe %s: %d\n",
+			 YB1_X91_RT5677_DEVICE, ret);
+
 	lenovo_yb1_x91_rt5677_dev = codec_dev;
 }
 
