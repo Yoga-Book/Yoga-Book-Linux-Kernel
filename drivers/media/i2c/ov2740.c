@@ -17,9 +17,9 @@
 #include <media/v4l2-device.h>
 #include <media/v4l2-fwnode.h>
 
-#define OV2740_LINK_FREQ_360MHZ		(360ULL * HZ_PER_MHZ)
-#define OV2740_LINK_FREQ_288MHZ		(288ULL * HZ_PER_MHZ)
-#define OV2740_LINK_FREQ_180MHZ		(180ULL * HZ_PER_MHZ)
+#define OV2740_LINK_FREQ_360MHZ		(360 * HZ_PER_MHZ)
+#define OV2740_LINK_FREQ_288MHZ		(288 * HZ_PER_MHZ)
+#define OV2740_LINK_FREQ_180MHZ		(180 * HZ_PER_MHZ)
 #define OV2740_SCLK			72000000LL
 #define OV2740_MCLK			19200000
 #define OV2740_DATA_LANES		2
@@ -132,12 +132,6 @@ struct ov2740_mode {
 
 	/* Link frequency needed for this resolution */
 	u32 link_freq_index;
-
-	/* Bayer order produced by this mode */
-	u32 code;
-
-	/* Optional common settings applied before the mode-specific settings */
-	const struct ov2740_reg_list init_reg_list;
 
 	/* Sensor register settings for this resolution */
 	const struct ov2740_reg_list reg_list;
@@ -475,36 +469,6 @@ static const struct ov2740_reg mode_1932x1092_regs_180mhz[] = {
 	{0x4003, 0x40},	/* set Black level to 0x40 */
 };
 
-/*
- * Lenovo's Yoga Book vendor driver uses the generic initialization settings
- * above followed by these mode overrides.  Unlike the generic 720 Mbps mode,
- * this is a 576 Mbps two-lane mode with BGGR output from the optical array.
- */
-static const struct ov2740_reg mode_1932x1092_regs_288mhz[] = {
-	{0x0302, 0x1e},
-	{0x0303, 0x00},
-	{0x030d, 0x1e},
-	{0x030e, 0x02},
-	{0x0312, 0x01},
-	{0x3808, 0x07},
-	{0x3809, 0x8c},
-	{0x380a, 0x04},
-	{0x380b, 0x44},
-	{0x380c, 0x04},
-	{0x380d, 0x38},
-	{0x380e, 0x06},
-	{0x380f, 0xf0},
-	{0x3810, 0x00},
-	{0x3811, 0x02},
-	{0x3812, 0x00},
-	{0x3813, 0x02},
-	{0x481f, 0x29},
-	{0x4820, 0x01},
-	{0x4837, 0x1b},
-	{0x5000, 0x7f},
-	{0x58f4, 0x32},
-};
-
 static const char * const ov2740_test_pattern_menu[] = {
 	"Disabled",
 	"Color Bar",
@@ -553,7 +517,6 @@ static const struct ov2740_mode supported_modes_360mhz[] = {
 			.regs = mode_1932x1092_regs_360mhz,
 		},
 		.link_freq_index = OV2740_LINK_FREQ_360MHZ_INDEX,
-		.code = MEDIA_BUS_FMT_SGRBG10_1X10,
 	},
 };
 
@@ -565,16 +528,11 @@ static const struct ov2740_mode supported_modes_288mhz[] = {
 		.vts_min = 1776,
 		.vts_def = 1776,
 		.vts_max = 32767,
-		.init_reg_list = {
+		.reg_list = {
 			.num_of_regs = ARRAY_SIZE(mode_1932x1092_regs_360mhz),
 			.regs = mode_1932x1092_regs_360mhz,
 		},
-		.reg_list = {
-			.num_of_regs = ARRAY_SIZE(mode_1932x1092_regs_288mhz),
-			.regs = mode_1932x1092_regs_288mhz,
-		},
 		.link_freq_index = OV2740_LINK_FREQ_288MHZ_INDEX,
-		.code = MEDIA_BUS_FMT_SBGGR10_1X10,
 	},
 };
 
@@ -591,7 +549,6 @@ static const struct ov2740_mode supported_modes_180mhz[] = {
 			.regs = mode_1932x1092_regs_180mhz,
 		},
 		.link_freq_index = OV2740_LINK_FREQ_180MHZ_INDEX,
-		.code = MEDIA_BUS_FMT_SGRBG10_1X10,
 	},
 };
 
@@ -944,7 +901,7 @@ static void ov2740_update_pad_format(const struct ov2740_mode *mode,
 {
 	fmt->width = mode->width;
 	fmt->height = mode->height;
-	fmt->code = mode->code;
+	fmt->code = MEDIA_BUS_FMT_SGRBG10_1X10;
 	fmt->field = V4L2_FIELD_NONE;
 }
 
@@ -1068,15 +1025,6 @@ static int ov2740_start_streaming(struct ov2740 *ov2740)
 		return ret;
 	}
 
-	if (ov2740->cur_mode->init_reg_list.num_of_regs) {
-		reg_list = &ov2740->cur_mode->init_reg_list;
-		ret = ov2740_write_reg_list(ov2740, reg_list);
-		if (ret) {
-			dev_err(ov2740->dev, "failed to set common mode registers\n");
-			return ret;
-		}
-	}
-
 	reg_list = &ov2740->cur_mode->reg_list;
 	ret = ov2740_write_reg_list(ov2740, reg_list);
 	if (ret) {
@@ -1173,12 +1121,10 @@ static int ov2740_enum_mbus_code(struct v4l2_subdev *sd,
 				 struct v4l2_subdev_state *sd_state,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
-	struct ov2740 *ov2740 = to_ov2740(sd);
-
 	if (code->index > 0)
 		return -EINVAL;
 
-	code->code = ov2740->supported_modes[0].code;
+	code->code = MEDIA_BUS_FMT_SGRBG10_1X10;
 
 	return 0;
 }
@@ -1193,7 +1139,7 @@ static int ov2740_enum_frame_size(struct v4l2_subdev *sd,
 	if (fse->index >= ov2740->supported_modes_count)
 		return -EINVAL;
 
-	if (fse->code != supported_modes[0].code)
+	if (fse->code != MEDIA_BUS_FMT_SGRBG10_1X10)
 		return -EINVAL;
 
 	fse->min_width = supported_modes[fse->index].width;

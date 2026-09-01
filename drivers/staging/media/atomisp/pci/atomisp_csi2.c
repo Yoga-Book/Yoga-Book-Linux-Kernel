@@ -210,7 +210,7 @@ error:
 static const int LIMIT_SHIFT = 6;	/* Limit numeric range into 31 bits */
 
 static int
-atomisp_csi2_configure_calc(const short int coeffs[2], int mipi_freq, int def)
+atomisp_csi2_configure_calc(const short int coeffs[2], s64 mipi_freq, int def)
 {
 	/* Delay counter accuracy, 1/0.0625 for ANN/CHT, 1/0.125 for BXT */
 	static const int accinv = 16;		/* 1 / COUNT_ACC */
@@ -290,18 +290,17 @@ static void atomisp_csi2_configure_isp2401(struct atomisp_sub_device *asd)
 	int dat_settle;
 
 	struct atomisp_device *isp = asd->isp;
-	struct v4l2_subdev *sensor;
-	s64 link_freq;
-	int mipi_freq = 0;
 	enum atomisp_camera_port port;
+	struct v4l2_subdev *sensor;
+	s64 mipi_freq;
 	int n;
 
 	port = isp->inputs[asd->input_curr].port;
 
 	sensor = isp->inputs[asd->input_curr].sensor;
-	link_freq = v4l2_get_link_freq(&sensor->entity.pads[0], 0, 0);
-	if (link_freq > 0 && link_freq <= S32_MAX)
-		mipi_freq = link_freq;
+	mipi_freq = v4l2_get_link_freq(&sensor->entity.pads[0], 0, 0);
+	if (mipi_freq < 0)
+		mipi_freq = 0;
 
 	clk_termen = atomisp_csi2_configure_calc(coeff_clk_termen, mipi_freq,
 						 TERMEN_DEFAULT);
@@ -313,7 +312,7 @@ static void atomisp_csi2_configure_isp2401(struct atomisp_sub_device *asd)
 						 SETTLE_DEFAULT);
 
 	dev_dbg(isp->dev,
-		"CSI port %u link frequency %d Hz, clk timing %d/%d, data timing %d/%d\n",
+		"CSI port %u link frequency %lld Hz, clk timing %d/%d, data timing %d/%d\n",
 		port, mipi_freq, clk_termen, clk_settle,
 		dat_termen, dat_settle);
 

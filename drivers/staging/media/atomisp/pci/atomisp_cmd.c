@@ -3572,16 +3572,10 @@ void atomisp_get_padding(struct atomisp_device *isp, struct v4l2_area size,
 	u32 min_pad_w = ISP2400_MIN_PAD_W;
 	u32 min_pad_h = ISP2400_MIN_PAD_H;
 	struct v4l2_mbus_framefmt *sink;
-	struct v4l2_area input_padding = {
-		.width = pad_w,
-		.height = pad_h,
-	};
-
-	if (input->padding_override)
-		input_padding = input->padding;
 
 	if (!input->crop_support) {
-		*pad = input_padding;
+		pad->width = pad_w;
+		pad->height = pad_h;
 		return;
 	}
 
@@ -3595,10 +3589,8 @@ void atomisp_get_padding(struct atomisp_device *isp, struct v4l2_area size,
 		native_rect.height /= 2;
 	}
 
-	pad->width = min_t(u32, (native_rect.width - size.width) & ~1,
-			   input_padding.width);
-	pad->height = min_t(u32, (native_rect.height - size.height) & ~1,
-			    input_padding.height);
+	pad->width = min_t(u32, (native_rect.width - size.width) & ~1, pad_w);
+	pad->height = min_t(u32, (native_rect.height - size.height) & ~1, pad_h);
 
 	/* The below minimum padding requirements are for BYT / ISP2400 only */
 	if (IS_ISP2401)
@@ -3628,6 +3620,16 @@ void atomisp_get_padding(struct atomisp_device *isp, struct v4l2_area size,
 apply_min_padding:
 	pad->width = max_t(u32, pad->width, min_pad_w);
 	pad->height = max_t(u32, pad->height, min_pad_h);
+}
+
+static inline void
+atomisp_get_pix_padding(struct atomisp_device *isp,
+			struct v4l2_pix_format *f,
+			struct v4l2_area *pad)
+{
+	struct v4l2_area size = { .width = f->width, .height = f->height };
+
+	atomisp_get_padding(isp, size, pad);
 }
 
 int atomisp_s_sensor_power(struct atomisp_device *isp, unsigned int input, bool on)
@@ -3810,7 +3812,6 @@ int atomisp_try_fmt(struct atomisp_device *isp, struct v4l2_pix_format *f,
 	struct atomisp_sub_device *asd = &isp->asd;
 	struct v4l2_mbus_framefmt ffmt = { };
 	struct v4l2_area padding;
-	struct v4l2_area size;
 	int ret;
 
 	fmt = atomisp_get_format_bridge(f->pixelformat);
@@ -3836,13 +3837,10 @@ int atomisp_try_fmt(struct atomisp_device *isp, struct v4l2_pix_format *f,
 	 * resolution + padding. Add padding here and remove it again after
 	 * the set_fmt call, like atomisp_set_fmt_to_snr() does.
 	 */
-	if (fmt->sh_fmt == IA_CSS_FRAME_FORMAT_RAW) {
+	if (fmt->sh_fmt == IA_CSS_FRAME_FORMAT_RAW)
 		padding = (struct v4l2_area) { };
-	} else {
-		size.width = f->width;
-		size.height = f->height;
-		atomisp_get_padding(isp, size, &padding);
-	}
+	else
+		atomisp_get_pix_padding(isp, f, &padding);
 	v4l2_fill_mbus_format(&ffmt, f, fmt->mbus_code);
 	ffmt.width += padding.width;
 	ffmt.height += padding.height;
@@ -3861,6 +3859,7 @@ int atomisp_try_fmt(struct atomisp_device *isp, struct v4l2_pix_format *f,
 			ffmt.code);
 		return -EINVAL;
 	}
+
 	if (fmt->sh_fmt == IA_CSS_FRAME_FORMAT_RAW &&
 	    fmt->mbus_code != snr_fmt->mbus_code) {
 		fmt = snr_fmt;
@@ -4288,11 +4287,12 @@ static int atomisp_set_fmt_to_snr(struct video_device *vdev, const struct v4l2_p
 		return -EINVAL;
 
 	v4l2_fill_mbus_format(&ffmt, f, format->mbus_code);
-	ffmt.height += asd->sink_pad_padding_h + dvs_env_h;
-	ffmt.width += asd->sink_pad_padding_w + dvs_env_w;
+	ffmt.height += asd->sink_pad_padding.height + dvs_env_h;
+	ffmt.width += asd->sink_pad_padding.width + dvs_env_w;
 
 	dev_dbg(isp->dev, "s_mbus_fmt: ask %ux%u (padding %ux%u, dvs %ux%u)\n",
-		ffmt.width, ffmt.height, asd->sink_pad_padding_w, asd->sink_pad_padding_h,
+		ffmt.width, ffmt.height, asd->sink_pad_padding.width,
+		asd->sink_pad_padding.height,
 		dvs_env_w, dvs_env_h);
 
 	__atomisp_init_stream_info(ATOMISP_INPUT_STREAM_GENERAL, stream_info);
@@ -4354,8 +4354,6 @@ int atomisp_set_fmt(struct video_device *vdev, struct v4l2_format *f)
 	const struct atomisp_format_bridge *format_bridge;
 	const struct atomisp_format_bridge *snr_format_bridge;
 	struct ia_css_frame_info output_info;
-	struct v4l2_area padding;
-	struct v4l2_area size;
 	unsigned int dvs_env_w = 0, dvs_env_h = 0;
 	struct v4l2_mbus_framefmt isp_source_fmt = {0};
 	struct v4l2_rect isp_sink_crop;
@@ -4387,16 +4385,11 @@ int atomisp_set_fmt(struct video_device *vdev, struct v4l2_format *f)
 				V4L2_SUBDEV_FORMAT_ACTIVE,
 				ATOMISP_SUBDEV_PAD_SOURCE, &isp_source_fmt);
 
-	if (atomisp_subdev_format_conversion(asd)) {
-		size.width = f->fmt.pix.width;
-		size.height = f->fmt.pix.height;
-		atomisp_get_padding(isp, size, &padding);
-		asd->sink_pad_padding_w = padding.width;
-		asd->sink_pad_padding_h = padding.height;
-	} else {
-		asd->sink_pad_padding_w = 0;
-		asd->sink_pad_padding_h = 0;
-	}
+	if (atomisp_subdev_format_conversion(asd))
+		atomisp_get_pix_padding(isp, &f->fmt.pix,
+					&asd->sink_pad_padding);
+	else
+		asd->sink_pad_padding = (struct v4l2_area) { };
 
 	atomisp_get_dis_envelop(asd, f->fmt.pix.width, f->fmt.pix.height,
 				&dvs_env_w, &dvs_env_h);

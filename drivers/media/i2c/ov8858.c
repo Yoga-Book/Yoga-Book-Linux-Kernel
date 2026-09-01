@@ -31,8 +31,8 @@
 #include <media/v4l2-subdev.h>
 
 #define OV8858_LINK_FREQ		(360 * HZ_PER_MHZ)
-#define OV8858_XVCLK_FREQ_19_2MHZ	(192 * HZ_PER_MHZ / 10)
-#define OV8858_XVCLK_FREQ_24MHZ		(24 * HZ_PER_MHZ)
+#define OV8858_XVCLK_FREQ_24MHZ		24000000
+#define OV8858_XVCLK_FREQ_19_2MHZ	19200000
 
 #define OV8858_REG_SIZE_SHIFT		16
 #define OV8858_REG_ADDR_MASK		0xffff
@@ -1618,8 +1618,7 @@ static int ov8858_set_long_digital_gain(struct ov8858 *ov8858, u32 gain)
 		    ((gain & OV8858_LONG_DIGIGAIN_H_MASK) <<
 		     OV8858_LONG_DIGIGAIN_H_SHIFT);
 
-	return ov8858_write(ov8858, OV8858_REG_LONG_DIGIGAIN,
-			    long_gain, NULL);
+	return ov8858_write(ov8858, OV8858_REG_LONG_DIGIGAIN, long_gain, NULL);
 }
 
 static int ov8858_set_mwb_digital_gain(struct ov8858 *ov8858, u32 gain)
@@ -2105,7 +2104,7 @@ static struct i2c_driver ov8858_i2c_driver = {
 	.driver = {
 		.name = "ov8858",
 		.pm = &ov8858_pm_ops,
-		.acpi_match_table = ov8858_acpi_match,
+		.acpi_match_table = ACPI_PTR(ov8858_acpi_match),
 		.of_match_table = ov8858_of_match,
 	},
 	.probe		= ov8858_probe,

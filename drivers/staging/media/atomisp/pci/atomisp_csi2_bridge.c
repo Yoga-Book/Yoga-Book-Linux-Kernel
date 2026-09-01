@@ -80,9 +80,6 @@ static struct gmin_cfg_var lenovo_ideapad_miix_310_vars[] = {
 static struct gmin_cfg_var lenovo_yogabook_x91_vars[] = {
 	/* The vendor driver and sensor modes use two CSI data lanes. */
 	{ "OVTI2740:00", "CsiLanes", "2" },
-	/* Crop the vendor mode's 1932x1092 transport frame to 1920x1080. */
-	{ "OVTI2740:00", "CsiPaddingWidth", "12" },
-	{ "OVTI2740:00", "CsiPaddingHeight", "12" },
 	{}
 };
 
@@ -211,40 +208,6 @@ out_use_default:
 	acpi_handle_info(adev->handle, "%s: Using default %s=%d\n",
 			 dev_name(&adev->dev), key, default_val);
 	return default_val;
-}
-
-static u32 atomisp_csi2_get_padding_value(struct acpi_device *adev,
-					  const char *key, u32 default_val)
-{
-	int val;
-
-	val = gmin_cfg_get_int(adev, key, default_val);
-	if (val >= 0 && val <= 64 && !(val & 1))
-		return val;
-
-	acpi_handle_warn(adev->handle, "%s: Invalid %s=%d\n",
-			 dev_name(&adev->dev), key, val);
-	return default_val;
-}
-
-bool atomisp_csi2_get_sensor_padding(struct device *dev,
-				     struct v4l2_area *padding)
-{
-	struct acpi_device *adev;
-
-	padding->width = pad_w;
-	padding->height = pad_h;
-
-	adev = ACPI_COMPANION(dev);
-	if (!adev)
-		return false;
-
-	padding->width =
-		atomisp_csi2_get_padding_value(adev, "CsiPaddingWidth", pad_w);
-	padding->height =
-		atomisp_csi2_get_padding_value(adev, "CsiPaddingHeight", pad_h);
-
-	return padding->width != pad_w || padding->height != pad_h;
 }
 
 static int atomisp_csi2_get_pmc_clk_nr_from_acpi_pr0(struct acpi_device *adev)
