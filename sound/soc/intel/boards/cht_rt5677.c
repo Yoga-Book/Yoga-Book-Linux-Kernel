@@ -9,6 +9,7 @@
  */
 
 #include <linux/clk.h>
+#include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/input.h>
@@ -71,8 +72,8 @@ disable_mclk:
 	return ret;
 }
 
-static void cht_rt5677_platform_clock_disable(struct snd_soc_card *card,
-					      struct snd_soc_dai *codec_dai)
+static int cht_rt5677_platform_clock_disable(struct snd_soc_card *card,
+					     struct snd_soc_dai *codec_dai)
 {
 	struct cht_rt5677_private *ctx = snd_soc_card_get_drvdata(card);
 	int ret;
@@ -83,6 +84,8 @@ static void cht_rt5677_platform_clock_disable(struct snd_soc_card *card,
 		dev_warn(card->dev, "setting codec idle sysclk failed: %d\n", ret);
 
 	clk_disable_unprepare(ctx->mclk);
+
+	return ret;
 }
 
 static int cht_rt5677_platform_clock_control(struct snd_soc_dapm_widget *w,
@@ -101,9 +104,7 @@ static int cht_rt5677_platform_clock_control(struct snd_soc_dapm_widget *w,
 	if (SND_SOC_DAPM_EVENT_ON(event))
 		return cht_rt5677_platform_clock_enable(card, codec_dai);
 
-	cht_rt5677_platform_clock_disable(card, codec_dai);
-
-	return 0;
+	return cht_rt5677_platform_clock_disable(card, codec_dai);
 }
 
 static int cht_rt5677_hp_event(struct snd_soc_dapm_widget *w,
@@ -112,9 +113,8 @@ static int cht_rt5677_hp_event(struct snd_soc_dapm_widget *w,
 	struct snd_soc_card *card = snd_soc_dapm_to_card(w->dapm);
 	struct cht_rt5677_private *ctx = snd_soc_card_get_drvdata(card);
 
-	gpiod_set_value_cansleep(ctx->gpio_hp_en, SND_SOC_DAPM_EVENT_ON(event));
-
-	return 0;
+	return gpiod_set_value_cansleep(ctx->gpio_hp_en,
+					 SND_SOC_DAPM_EVENT_ON(event));
 }
 
 static int cht_rt5677_spk_event(struct snd_soc_dapm_widget *w,
@@ -122,11 +122,49 @@ static int cht_rt5677_spk_event(struct snd_soc_dapm_widget *w,
 {
 	struct snd_soc_card *card = snd_soc_dapm_to_card(w->dapm);
 	struct cht_rt5677_private *ctx = snd_soc_card_get_drvdata(card);
+	bool enable = SND_SOC_DAPM_EVENT_ON(event);
+	int rollback_ret;
+	int ret;
+	int i;
 
-	gpiod_set_value_cansleep(ctx->gpio_spk_en1, SND_SOC_DAPM_EVENT_ON(event));
-	gpiod_set_value_cansleep(ctx->gpio_spk_en2, SND_SOC_DAPM_EVENT_ON(event));
+	/* Program the external boost amplifier for mode 3 before enabling it. */
+	if (enable) {
+		for (i = 0; i < 4; i++) {
+			ret = gpiod_set_value_cansleep(ctx->gpio_spk_en1,
+						       !(i & 1));
+			if (ret)
+				goto disable_boost;
+
+			udelay(2);
+		}
+	}
+
+	ret = gpiod_set_value_cansleep(ctx->gpio_spk_en1, enable);
+	if (ret)
+		return ret;
+
+	ret = gpiod_set_value_cansleep(ctx->gpio_spk_en2, enable);
+	if (ret) {
+		rollback_ret = gpiod_set_value_cansleep(ctx->gpio_spk_en1,
+							!enable);
+		if (rollback_ret)
+			dev_warn(card->dev, "rolling back speaker GPIO failed: %d\n",
+				 rollback_ret);
+		return ret;
+	}
+
+	if (enable)
+		msleep(50);
 
 	return 0;
+
+disable_boost:
+	rollback_ret = gpiod_set_value_cansleep(ctx->gpio_spk_en1, 0);
+	if (rollback_ret)
+		dev_warn(card->dev, "disabling speaker boost GPIO failed: %d\n",
+			 rollback_ret);
+
+	return ret;
 }
 
 static const struct snd_soc_dapm_widget cht_rt5677_widgets[] = {
@@ -221,13 +259,21 @@ static int cht_rt5677_codec_init(struct snd_soc_pcm_runtime *runtime)
 	 * The codec derives its asynchronous sample-rate conversion clocks from
 	 * I2S1 while the SSP link runs from the Cherry Trail platform clock.
 	 */
-	rt5677_sel_asrc_clk_src(component, RT5677_DA_STEREO_FILTER |
-					    RT5677_AD_STEREO1_FILTER |
-					    RT5677_I2S1_SOURCE,
-				     RT5677_CLK_SEL_I2S1_ASRC);
+	ret = rt5677_sel_asrc_clk_src(component, RT5677_DA_STEREO_FILTER |
+					       RT5677_AD_STEREO1_FILTER |
+					       RT5677_I2S1_SOURCE,
+					RT5677_CLK_SEL_I2S1_ASRC);
+	if (ret) {
+		dev_err(runtime->dev, "setting stereo ASRC clock failed: %d\n", ret);
+		return ret;
+	}
 
 	/* Mono ADC L uses the codec system clock rather than the I2S1 clock. */
-	rt5677_sel_asrc_clk_src(component, RT5677_AD_MONO_L_FILTER, RT5677_CLK_SEL_SYS2);
+	ret = rt5677_sel_asrc_clk_src(component, RT5677_AD_MONO_L_FILTER, RT5677_CLK_SEL_SYS2);
+	if (ret) {
+		dev_err(runtime->dev, "setting mono ASRC clock failed: %d\n", ret);
+		return ret;
+	}
 
 	/* Firmware may leave MCLK enabled without updating the CCF count. */
 	ret = clk_prepare_enable(ctx->mclk);
@@ -261,7 +307,7 @@ static int cht_rt5677_codec_fixup(struct snd_soc_pcm_runtime *rtd,
 	channels->max = 2;
 
 	/*
-	 * Configure SSP2 for the 24-bit format expected by the codec. The SST
+	 * Configure SSP2 for the 24-bit format expected by the codec. The
 	 * ssp2-port front end still advertises S16_LE and converts the stream.
 	 */
 	snd_mask_none(hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT));
@@ -333,16 +379,12 @@ static const struct snd_soc_aux_dev cht_rt5677_headset_dev = {
 	.init = cht_rt5677_headset_init,
 };
 
-SND_SOC_DAILINK_DEF(dummy, DAILINK_COMP_ARRAY(COMP_DUMMY()));
-
-SND_SOC_DAILINK_DEF(media, DAILINK_COMP_ARRAY(COMP_CPU("media-cpu-dai")));
-
-SND_SOC_DAILINK_DEF(deepbuffer, DAILINK_COMP_ARRAY(COMP_CPU("deepbuffer-cpu-dai")));
-
-SND_SOC_DAILINK_DEF(ssp2_port, DAILINK_COMP_ARRAY(COMP_CPU("ssp2-port")));
-SND_SOC_DAILINK_DEF(ssp2_codec, DAILINK_COMP_ARRAY(COMP_CODEC(RT5677_I2C, CHT_CODEC_DAI)));
-
-SND_SOC_DAILINK_DEF(platform, DAILINK_COMP_ARRAY(COMP_PLATFORM("sst-mfld-platform")));
+SND_SOC_DAILINK_DEF(dummy,	DAILINK_COMP_ARRAY(COMP_DUMMY()));
+SND_SOC_DAILINK_DEF(media,	DAILINK_COMP_ARRAY(COMP_CPU("media-cpu-dai")));
+SND_SOC_DAILINK_DEF(deepbuffer,	DAILINK_COMP_ARRAY(COMP_CPU("deepbuffer-cpu-dai")));
+SND_SOC_DAILINK_DEF(ssp2_port,	DAILINK_COMP_ARRAY(COMP_CPU("ssp2-port")));
+SND_SOC_DAILINK_DEF(ssp2_codec,	DAILINK_COMP_ARRAY(COMP_CODEC(RT5677_I2C, CHT_CODEC_DAI)));
+SND_SOC_DAILINK_DEF(platform,	DAILINK_COMP_ARRAY(COMP_PLATFORM("sst-mfld-platform")));
 
 static const struct snd_soc_dai_link cht_rt5677_dailink[] = {
 	/* Front End DAI links */
@@ -378,7 +420,6 @@ static const struct snd_soc_dai_link cht_rt5677_dailink[] = {
 	},
 };
 
-/* SoC card */
 static const struct snd_soc_card cht_rt5677_card = {
 	.owner = THIS_MODULE,
 	.num_links = ARRAY_SIZE(cht_rt5677_dailink),
@@ -397,11 +438,8 @@ static const struct acpi_gpio_mapping cht_rt5677_gpios[] = {
 	{ }
 };
 
-#define SOF_CARD_NAME "cht yogabook"
-#define SOF_DRIVER_NAME "SOF"
-
-#define CARD_NAME "cht-rt5677"
-#define DRIVER_NAME NULL
+#define CARD_NAME "cht yogabook"
+#define DRIVER_NAME "SOF"
 
 static void cht_rt5677_gpiod_put(void *data)
 {
@@ -482,10 +520,8 @@ static int snd_cht_rt5677_probe(struct platform_device *pdev)
 	struct snd_soc_aux_dev *aux_dev;
 	struct snd_soc_dai_link *dai_links;
 	struct snd_soc_card *card;
-	const char *platform_name;
 	struct acpi_device *adev;
 	struct device *codec_dev;
-	bool sof_parent;
 	int ret;
 	int i;
 
@@ -564,11 +600,6 @@ static int snd_cht_rt5677_probe(struct platform_device *pdev)
 	put_device(codec_dev);
 
 	card->dev = dev;
-	platform_name = mach->mach_params.platform;
-
-	ret = snd_soc_fixup_dai_links_platform_name(card, platform_name);
-	if (ret)
-		return dev_err_probe(dev, ret, "fixing DAI link platform name failed\n");
 
 	ctx->mclk = devm_clk_get(dev, "pmc_plt_clk_3");
 	if (IS_ERR(ctx->mclk))
@@ -576,15 +607,8 @@ static int snd_cht_rt5677_probe(struct platform_device *pdev)
 
 	snd_soc_card_set_drvdata(card, ctx);
 
-	sof_parent = snd_soc_acpi_sof_parent(dev);
-
-	if (sof_parent) {
-		card->name = SOF_CARD_NAME;
-		card->driver_name = SOF_DRIVER_NAME;
-	} else {
-		card->name = CARD_NAME;
-		card->driver_name = DRIVER_NAME;
-	}
+	card->name = CARD_NAME;
+	card->driver_name = DRIVER_NAME;
 
 	ret = devm_snd_soc_register_card(dev, card);
 	if (ret)
