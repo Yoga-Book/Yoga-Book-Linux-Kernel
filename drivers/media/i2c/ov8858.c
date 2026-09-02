@@ -104,33 +104,6 @@ struct regval_modes {
 	const struct regval *mode_4lanes;
 };
 
-struct ov8858_gain_range {
-	u32 min;
-	u32 max;
-	u32 step;
-	u32 def;
-};
-
-enum ov8858_xvclk_index {
-	OV8858_XVCLK_24MHZ,
-	OV8858_XVCLK_19_2MHZ,
-};
-
-static const struct ov8858_gain_range ov8858_digital_gain_ranges[] = {
-	[OV8858_XVCLK_24MHZ] = {
-		.min = OV8858_LONG_DIGIGAIN_MIN,
-		.max = OV8858_LONG_DIGIGAIN_MAX,
-		.step = OV8858_LONG_DIGIGAIN_STEP,
-		.def = OV8858_LONG_DIGIGAIN_DEFAULT,
-	},
-	[OV8858_XVCLK_19_2MHZ] = {
-		.min = OV8858_MWB_GAIN_MIN,
-		.max = OV8858_MWB_GAIN_MAX,
-		.step = OV8858_MWB_GAIN_STEP,
-		.def = OV8858_MWB_GAIN_DEFAULT,
-	},
-};
-
 struct ov8858_mode {
 	u32 width;
 	u32 height;
@@ -154,15 +127,55 @@ struct ov8858 {
 	struct v4l2_ctrl	*exposure;
 	struct v4l2_ctrl	*hblank;
 	struct v4l2_ctrl	*vblank;
+	struct v4l2_ctrl	*red_balance;
+	struct v4l2_ctrl	*blue_balance;
 
 	const struct regval	*global_regs;
+	const struct regval	*xvclk_regs;
 
 	unsigned int		num_lanes;
 };
 
+/* Keep input-clock programming separate from the common sensor setup. */
+static const struct regval ov8858_24mhz_r1a_2lane[] = {
+	{0x0302, 0x1e},
+	{0x0303, 0x00},
+	{0x0304, 0x03},
+	{0x030e, 0x00},
+	{0x030f, 0x09},
+	{0x0312, 0x01},
+	{0x031e, 0x0c},
+	{0x4837, 0x16},
+	{REG_NULL, 0x00},
+};
+
+static const struct regval ov8858_24mhz_r2a_2lane[] = {
+	{0x0302, 0x1e},
+	{0x0303, 0x00},
+	{0x0304, 0x03},
+	{0x030e, 0x02},
+	{0x030f, 0x04},
+	{0x0312, 0x03},
+	{0x031e, 0x0c},
+	{0x4837, 0x16},
+	{REG_NULL, 0x00},
+};
+
+static const struct regval ov8858_24mhz_r2a_4lane[] = {
+	{0x0302, 0x1e},
+	{0x0303, 0x00},
+	{0x0304, 0x03},
+	{0x030e, 0x00},
+	{0x030f, 0x04},
+	{0x0312, 0x01},
+	{0x031e, 0x0c},
+	{0x4837, 0x16},
+	{REG_NULL, 0x00},
+};
+
 /*
  * Cherry Trail MRD production settings for a 19.2 MHz input and 360 MHz
- * CSI-2 link. Apply these after the otherwise reusable 24 MHz mode table.
+ * CSI-2 link.
  *
  * Besides the corrected sensor/MIPI PLL divisors, keep the final common
  * black-level settings here. The per-mode tables retain their resolution
@@ -205,13 +218,6 @@ static const struct regval ov8858_global_regs_r1a[] = {
 	{0x0100, 0x00},
 	{0x0100, 0x00},
 	{0x0100, 0x00},
-	{0x0302, 0x1e},
-	{0x0303, 0x00},
-	{0x0304, 0x03},
-	{0x030e, 0x00},
-	{0x030f, 0x09},
-	{0x0312, 0x01},
-	{0x031e, 0x0c},
 	{0x3600, 0x00},
 	{0x3601, 0x00},
 	{0x3602, 0x00},
@@ -444,7 +450,6 @@ static const struct regval ov8858_global_regs_r1a[] = {
 	{0x4600, 0x00},
 	{0x4601, 0xcb},
 	{0x481f, 0x32},
-	{0x4837, 0x16},
 	{0x4850, 0x10},
 	{0x4851, 0x32},
 	{0x4b00, 0x2a},
@@ -479,13 +484,6 @@ static const struct regval ov8858_global_regs_r2a_2lane[] = {
 	 */
 	{0x0103, 0x01}, /* software reset */
 	{0x0100, 0x00}, /* software standby */
-	{0x0302, 0x1e}, /* pll1_multi */
-	{0x0303, 0x00}, /* pll1_divm */
-	{0x0304, 0x03}, /* pll1_div_mipi */
-	{0x030e, 0x02}, /* pll2_rdiv */
-	{0x030f, 0x04}, /* pll2_divsp */
-	{0x0312, 0x03}, /* pll2_pre_div0, pll2_r_divdac */
-	{0x031e, 0x0c}, /* pll1_no_lat */
 	{0x3600, 0x00},
 	{0x3601, 0x00},
 	{0x3602, 0x00},
@@ -722,7 +720,6 @@ static const struct regval ov8858_global_regs_r2a_2lane[] = {
 	{0x4600, 0x00},
 	{0x4601, 0xcb},
 	{0x481f, 0x32}, /* clk prepare min */
-	{0x4837, 0x16}, /* global timing */
 	{0x4850, 0x10}, /* lane 1 = 1, lane 0 = 0 */
 	{0x4851, 0x32}, /* lane 3 = 3, lane 2 = 2 */
 	{0x4b00, 0x2a},
@@ -884,13 +881,6 @@ static const struct regval ov8858_global_regs_r2a_4lane[] = {
 	{0x0103, 0x01}, /* software reset for OVTATool only */
 	{0x0103, 0x01}, /* software reset */
 	{0x0100, 0x00}, /* software standby */
-	{0x0302, 0x1e}, /* pll1_multi */
-	{0x0303, 0x00}, /* pll1_divm */
-	{0x0304, 0x03}, /* pll1_div_mipi */
-	{0x030e, 0x00}, /* pll2_rdiv */
-	{0x030f, 0x04}, /* pll2_divsp */
-	{0x0312, 0x01}, /* pll2_pre_div0, pll2_r_divdac */
-	{0x031e, 0x0c}, /* pll1_no_lat */
 	{0x3600, 0x00},
 	{0x3601, 0x00},
 	{0x3602, 0x00},
@@ -1127,7 +1117,6 @@ static const struct regval ov8858_global_regs_r2a_4lane[] = {
 	{0x4600, 0x00},
 	{0x4601, 0xcb},
 	{0x481f, 0x32}, /* clk prepare min */
-	{0x4837, 0x16}, /* global timing */
 	{0x4850, 0x10}, /* lane 1 = 1, lane 0 = 0 */
 	{0x4851, 0x32}, /* lane 3 = 3, lane 2 = 2 */
 	{0x4b00, 0x2a},
@@ -1419,12 +1408,9 @@ static int ov8858_start_stream(struct ov8858 *ov8858,
 	if (ret)
 		return ret;
 
-	/* The mode tables contain PLL settings for a 24 MHz input clock. */
-	if (ov8858->xvclk_rate == OV8858_XVCLK_FREQ_19_2MHZ) {
-		ret = ov8858_write_array(ov8858, ov8858_cht_mrd_19_2mhz);
-		if (ret)
-			return ret;
-	}
+	ret = ov8858_write_array(ov8858, ov8858->xvclk_regs);
+	if (ret)
+		return ret;
 
 	/* 200 usec max to let PLL stabilize. */
 	fsleep(200);
@@ -1622,19 +1608,19 @@ static int ov8858_set_long_digital_gain(struct ov8858 *ov8858, u32 gain)
 			    long_gain, NULL);
 }
 
-static int ov8858_set_mwb_digital_gain(struct ov8858 *ov8858, u32 gain)
+static int ov8858_set_mwb_gains(struct ov8858 *ov8858)
 {
-	int ret;
+	int ret = 0;
 
-	ret = ov8858_write(ov8858, OV8858_REG_MWB_RED_GAIN, gain, NULL);
-	if (ret)
-		return ret;
+	ov8858_write(ov8858, OV8858_REG_MWB_RED_GAIN,
+		     ov8858->red_balance->val, &ret);
+	/* Green is the unity reference for the red and blue balance controls. */
+	ov8858_write(ov8858, OV8858_REG_MWB_GREEN_GAIN,
+		     OV8858_MWB_GAIN_DEFAULT, &ret);
+	ov8858_write(ov8858, OV8858_REG_MWB_BLUE_GAIN,
+		     ov8858->blue_balance->val, &ret);
 
-	ret = ov8858_write(ov8858, OV8858_REG_MWB_GREEN_GAIN, gain, NULL);
-	if (ret)
-		return ret;
-
-	return ov8858_write(ov8858, OV8858_REG_MWB_BLUE_GAIN, gain, NULL);
+	return ret;
 }
 
 static int ov8858_set_ctrl(struct v4l2_ctrl *ctrl)
@@ -1683,10 +1669,11 @@ static int ov8858_set_ctrl(struct v4l2_ctrl *ctrl)
 				   ctrl->val, NULL);
 		break;
 	case V4L2_CID_DIGITAL_GAIN:
-		if (ov8858->xvclk_rate == OV8858_XVCLK_FREQ_19_2MHZ)
-			ret = ov8858_set_mwb_digital_gain(ov8858, ctrl->val);
-		else
-			ret = ov8858_set_long_digital_gain(ov8858, ctrl->val);
+		ret = ov8858_set_long_digital_gain(ov8858, ctrl->val);
+		break;
+	case V4L2_CID_RED_BALANCE:
+	case V4L2_CID_BLUE_BALANCE:
+		ret = ov8858_set_mwb_gains(ov8858);
 		break;
 	case V4L2_CID_VBLANK:
 		ret = ov8858_write(ov8858, OV8858_REG_VTS,
@@ -1798,17 +1785,15 @@ static int ov8858_init_ctrls(struct ov8858 *ov8858)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&ov8858->subdev);
 	struct v4l2_ctrl_handler *handler = &ov8858->ctrl_handler;
-	const struct ov8858_gain_range *digital_gain_range;
 	const struct ov8858_mode *mode = &ov8858_modes[0];
 	struct v4l2_fwnode_device_properties props;
 	s64 exposure_max, vblank_def;
-	unsigned int xvclk_index;
 	unsigned int pixel_rate;
 	struct v4l2_ctrl *ctrl;
 	u32 h_blank;
 	int ret;
 
-	ret = v4l2_ctrl_handler_init(handler, 10);
+	ret = v4l2_ctrl_handler_init(handler, 12);
 	if (ret)
 		return ret;
 
@@ -1845,12 +1830,23 @@ static int ov8858_init_ctrls(struct ov8858 *ov8858)
 			  OV8858_LONG_GAIN_MIN, OV8858_LONG_GAIN_MAX,
 			  OV8858_LONG_GAIN_STEP, OV8858_LONG_GAIN_DEFAULT);
 
-	xvclk_index = ov8858->xvclk_rate == OV8858_XVCLK_FREQ_19_2MHZ ?
-		OV8858_XVCLK_19_2MHZ : OV8858_XVCLK_24MHZ;
-	digital_gain_range = &ov8858_digital_gain_ranges[xvclk_index];
 	v4l2_ctrl_new_std(handler, &ov8858_ctrl_ops, V4L2_CID_DIGITAL_GAIN,
-			  digital_gain_range->min, digital_gain_range->max,
-			  digital_gain_range->step, digital_gain_range->def);
+			  OV8858_LONG_DIGIGAIN_MIN, OV8858_LONG_DIGIGAIN_MAX,
+			  OV8858_LONG_DIGIGAIN_STEP,
+			  OV8858_LONG_DIGIGAIN_DEFAULT);
+
+	ov8858->red_balance =
+		v4l2_ctrl_new_std(handler, &ov8858_ctrl_ops,
+				  V4L2_CID_RED_BALANCE,
+				  OV8858_MWB_GAIN_MIN, OV8858_MWB_GAIN_MAX,
+				  OV8858_MWB_GAIN_STEP,
+				  OV8858_MWB_GAIN_DEFAULT);
+	ov8858->blue_balance =
+		v4l2_ctrl_new_std(handler, &ov8858_ctrl_ops,
+				  V4L2_CID_BLUE_BALANCE,
+				  OV8858_MWB_GAIN_MIN, OV8858_MWB_GAIN_MAX,
+				  OV8858_MWB_GAIN_STEP,
+				  OV8858_MWB_GAIN_DEFAULT);
 
 	v4l2_ctrl_new_std_menu_items(handler, &ov8858_ctrl_ops,
 				     V4L2_CID_TEST_PATTERN,
@@ -1905,21 +1901,29 @@ static int ov8858_check_sensor_id(struct ov8858 *ov8858)
 
 	if (id == OV8858_R2A) {
 		/* R2A supports 2 and 4 lanes modes. */
-		ov8858->global_regs = ov8858->num_lanes == 4
-				    ? ov8858_global_regs_r2a_4lane
-				    : ov8858_global_regs_r2a_2lane;
+		if (ov8858->num_lanes == 4) {
+			ov8858->global_regs = ov8858_global_regs_r2a_4lane;
+			ov8858->xvclk_regs = ov8858_24mhz_r2a_4lane;
+		} else {
+			ov8858->global_regs = ov8858_global_regs_r2a_2lane;
+			ov8858->xvclk_regs = ov8858_24mhz_r2a_2lane;
+		}
 	} else if (ov8858->num_lanes == 2) {
 		/*
 		 * R1A only supports 2 lanes mode and it's only partially
 		 * supported.
 		 */
 		ov8858->global_regs = ov8858_global_regs_r1a;
+		ov8858->xvclk_regs = ov8858_24mhz_r1a_2lane;
 		dev_warn(&client->dev, "R1A may not work well!\n");
 	} else {
 		dev_err(&client->dev,
 			"Unsupported number of data lanes for R1A revision.\n");
 		return -EINVAL;
 	}
+
+	if (ov8858->xvclk_rate == OV8858_XVCLK_FREQ_19_2MHZ)
+		ov8858->xvclk_regs = ov8858_cht_mrd_19_2mhz;
 
 	return 0;
 }
