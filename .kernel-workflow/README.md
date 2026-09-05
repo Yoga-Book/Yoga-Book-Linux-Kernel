@@ -4,19 +4,26 @@
 ancestry and must never be merged or cherry-picked into kernel patch branches.
 It can be published separately to the Yoga-Book GitHub fork when authorized.
 
-The active kernel checkout uses local, untracked copies of `AGENTS.md` and
-`.kernel-workflow/`. Root-anchored entries in `.git/info/exclude` prevent normal
-staging of these paths without changing the kernel's tracked `.gitignore`.
+The active kernel checkout uses local, untracked copies of `AGENTS.md`,
+`.kernel-workflow/`, and `.codex/config.toml`. Root-anchored entries in
+`.git/info/exclude` exclude the first two paths; the kernel's existing `.*`
+ignore rule also excludes `.codex/` without changing tracked `.gitignore` files.
 Exclusion does not prevent `git add -f` or override already tracked files.
+
+Only `.codex/config.toml` is versioned from `.codex/`; do not add credentials,
+session state, or caches. The configuration expects `codegraph`, `engram`,
+`npx`, and `uvx` on PATH and a local Firecrawl service on port 3002. Its existing
+MCP settings are preserved; installing this file does not install those services.
 
 To recover the saved configuration without switching the kernel checkout, run
 from the kernel repository root:
 
 ```sh
 config_copy=$(mktemp -d /tmp/yogabook-llm-restore.XXXXXX)
-git archive LLM-Config -- AGENTS.md .kernel-workflow | tar -x -C "$config_copy"
+git archive LLM-Config -- AGENTS.md .kernel-workflow .codex/config.toml | tar -x -C "$config_copy"
 diff -u AGENTS.md "$config_copy/AGENTS.md"
 diff -ru .kernel-workflow "$config_copy/.kernel-workflow"
+diff -u .codex/config.toml "$config_copy/.codex/config.toml"
 ```
 
 The temporary copy is available for inspection even if the local files are

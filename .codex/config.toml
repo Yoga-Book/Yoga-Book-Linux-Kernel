@@ -1,0 +1,21 @@
+[mcp_servers.codegraph]
+command = "codegraph"
+args = ["serve", "--mcp"]
+
+[mcp_servers.engram]
+command = "engram"
+args = ["mcp"]
+
+[mcp_servers.firecrawl]
+command = "npx"
+args = ["-y", "firecrawl-mcp@3.23.0"]
+env = { FIRECRAWL_API_URL = "http://127.0.0.1:3002", npm_config_cache = "/tmp/yoga-book-firecrawl-mcp-cache" }
+startup_timeout_sec = 60
+
+[mcp_servers.semgrep]
+command = "uvx"
+args = ["--from", "semgrep==1.172.0", "semgrep", "mcp"]
+env = { UV_CACHE_DIR = "/tmp/yoga-book-semgrep-mcp-cache", UV_TOOL_DIR = "/tmp/yoga-book-semgrep-mcp-tools", SEMGREP_SETTINGS_FILE = "/tmp/yoga-book-semgrep-settings.yml", SEMGREP_LOG_FILE = "/tmp/yoga-book-semgrep.log" }
+startup_timeout_sec = 60
+tool_timeout_sec = 120
+default_tools_approval_mode = "auto"
