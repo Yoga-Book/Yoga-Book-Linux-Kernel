@@ -16,8 +16,18 @@ Optimize for correctness, small reviewable changes, and verifiable evidence.
 - Read current source, nearby callers, relevant git history, `MAINTAINERS`, and
   subsystem documentation before proposing a change. Memory is a lead, not proof
   of the current hardware, branch, maintainer, or mailing-list state.
-- Keep this file and `.kernel-workflow/` out of upstream kernel patch series.
+- Keep this file, `.agents/`, `.codex/`, and `.kernel-workflow/` out of upstream kernel patch series.
   They are local agent configuration, not kernel changes.
+
+## Repository skills
+
+Use the focused workflows in `.agents/skills/` when their descriptions match:
+`kernel-development` for diagnosis, implementation and technical review;
+`kernel-patch-submit` for submission preparation and readiness audits; and
+`kernel-review-followup` for reviewer comments, revisions and submission status.
+Read the selected SKILL.md before acting. These skills and their shared workflow
+references are saved on the independent `LLM-Config` branch, never merged into
+kernel patch branches.
 
 ## Documentation is part of the task
 

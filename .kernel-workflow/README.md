@@ -5,9 +5,9 @@ ancestry and must never be merged or cherry-picked into kernel patch branches.
 It can be published separately to the Yoga-Book GitHub fork when authorized.
 
 The active kernel checkout uses local, untracked copies of `AGENTS.md`,
-`.kernel-workflow/`, and `.codex/config.toml`. Root-anchored entries in
+`.kernel-workflow/`, `.agents/skills/`, and `.codex/config.toml`. Root-anchored entries in
 `.git/info/exclude` exclude the first two paths; the kernel's existing `.*`
-ignore rule also excludes `.codex/` without changing tracked `.gitignore` files.
+ignore rule also excludes `.codex/` and `.agents/` without changing tracked `.gitignore` files.
 Exclusion does not prevent `git add -f` or override already tracked files.
 
 Only `.codex/config.toml` is versioned from `.codex/`; do not add credentials,
@@ -15,15 +15,23 @@ session state, or caches. The configuration expects `codegraph`, `engram`,
 `npx`, and `uvx` on PATH and a local Firecrawl service on port 3002. Its existing
 MCP settings are preserved; installing this file does not install those services.
 
+Repository skills live in `.agents/skills/` (plural), the Codex discovery path.
+Use `$kernel-development`, `$kernel-patch-submit`, or `$kernel-review-followup`
+explicitly, or allow Codex to select a matching skill automatically. If newly
+installed skills do not appear, restart Codex. The submission skill includes a
+read-only history guard that rejects local agent files even when a later commit
+removes them again; it is not a substitute for patch review or kernel validation.
+
 To recover the saved configuration without switching the kernel checkout, run
 from the kernel repository root:
 
 ```sh
 config_copy=$(mktemp -d /tmp/yogabook-llm-restore.XXXXXX)
-git archive LLM-Config -- AGENTS.md .kernel-workflow .codex/config.toml | tar -x -C "$config_copy"
+git archive LLM-Config -- AGENTS.md .kernel-workflow .codex/config.toml .agents/skills | tar -x -C "$config_copy"
 diff -u AGENTS.md "$config_copy/AGENTS.md"
 diff -ru .kernel-workflow "$config_copy/.kernel-workflow"
 diff -u .codex/config.toml "$config_copy/.codex/config.toml"
+diff -ru .agents/skills "$config_copy/.agents/skills"
 ```
 
 The temporary copy is available for inspection even if the local files are

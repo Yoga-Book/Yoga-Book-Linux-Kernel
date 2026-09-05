@@ -1,0 +1,3 @@
+interface:
+  display_name: "Kernel Review Followup"
+  short_description: "Resolve maintainer feedback and prepare revisions"

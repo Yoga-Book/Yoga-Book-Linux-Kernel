@@ -1,0 +1,3 @@
+interface:
+  display_name: "Kernel Development"
+  short_description: "Diagnose and validate Linux kernel changes"
