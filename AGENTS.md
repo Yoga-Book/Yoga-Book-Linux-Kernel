@@ -25,6 +25,10 @@ Use the focused workflows in `.agents/skills/` when their descriptions match:
 `kernel-development` for diagnosis, implementation and technical review;
 `kernel-patch-submit` for submission preparation and readiness audits; and
 `kernel-review-followup` for reviewer comments, revisions and submission status.
+For deeper work, use `kernel-regression-debug` for controlled comparisons and
+bisection, `kernel-validation` for a risk-based test matrix,
+`kernel-driver-lifecycle-review` for ownership and asynchronous teardown/PM, and
+`kernel-stable-backport` for older-tree adaptation and stable eligibility.
 Read the selected SKILL.md before acting. These skills and their shared workflow
 references are saved on the independent `LLM-Config` branch, never merged into
 kernel patch branches.

@@ -1,0 +1,3 @@
+interface:
+  display_name: "Kernel Validation"
+  short_description: "Plan and record meaningful kernel validation"

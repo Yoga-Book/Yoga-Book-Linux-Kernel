@@ -22,6 +22,16 @@ installed skills do not appear, restart Codex. The submission skill includes a
 read-only history guard that rejects local agent files even when a later commit
 removes them again; it is not a substitute for patch review or kernel validation.
 
+Specialized skills deepen selected parts of that workflow:
+
+- `$kernel-regression-debug`: controlled good/bad comparisons and bisection.
+- `$kernel-validation`: configuration coverage and reproducible test evidence.
+- `$kernel-driver-lifecycle-review`: ownership, teardown races and power management.
+- `$kernel-stable-backport`: stable eligibility, dependencies and older-tree semantics.
+
+Use these when the task calls for that depth; they are not mandatory steps for
+every patch and do not grant permission to deploy, reboot or send mail.
+
 To recover the saved configuration without switching the kernel checkout, run
 from the kernel repository root:
 

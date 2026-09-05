@@ -1,0 +1,3 @@
+interface:
+  display_name: "Kernel Stable Backport"
+  short_description: "Adapt upstream fixes safely to older kernel trees"

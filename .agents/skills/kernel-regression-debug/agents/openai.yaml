@@ -1,0 +1,3 @@
+interface:
+  display_name: "Kernel Regression Debug"
+  short_description: "Isolate regressions with reproducible causal evidence"
