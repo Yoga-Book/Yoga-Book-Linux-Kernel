@@ -95,10 +95,10 @@ static struct gmin_cfg_var xiaomi_mipad2_vars[] = {
 
 static const struct dmi_system_id gmin_cfg_dmi_overrides[] = {
 	{
-		/* Lenovo Yoga Book X91L */
+		/* Lenovo Yoga Book X91F / X91L, non exact match to match F + L */
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "Lenovo YB1-X91L"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Lenovo YB1-X91"),
 		},
 		.driver_data = lenovo_yogabook_x91_vars,
 	},

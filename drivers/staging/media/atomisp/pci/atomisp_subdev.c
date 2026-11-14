@@ -135,7 +135,13 @@ bool atomisp_subdev_format_conversion(struct atomisp_sub_device *asd)
 static long isp_subdev_ioctl(struct v4l2_subdev *sd,
 			     unsigned int cmd, void *arg)
 {
-	return 0;
+	/*
+	 * The Atom ISP subdevice implements no private ioctls.  Returning 0
+	 * for every command makes VIDIOC_ENUMINPUT succeed with an empty
+	 * input for every index, so GStreamer's v4l2 device provider never
+	 * stops probing and applications such as Cheese appear to hang.
+	 */
+	return -ENOIOCTLCMD;
 }
 
 static int isp_subdev_subscribe_event(struct v4l2_subdev *sd,

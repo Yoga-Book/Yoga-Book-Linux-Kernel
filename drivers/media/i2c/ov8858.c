@@ -61,13 +61,6 @@
 #define OV8858_LONG_GAIN_STEP		1
 #define OV8858_LONG_GAIN_DEFAULT	0x80
 
-#define OV8858_REG_MWB_RED_GAIN		OV8858_REG_16BIT(0x5032)
-#define OV8858_REG_MWB_GREEN_GAIN	OV8858_REG_16BIT(0x5034)
-#define OV8858_REG_MWB_BLUE_GAIN	OV8858_REG_16BIT(0x5036)
-#define OV8858_MWB_GAIN_MIN		0x400
-#define OV8858_MWB_GAIN_MAX		0xfff
-#define OV8858_MWB_GAIN_DEFAULT		0x400
-
 #define OV8858_REG_LONG_DIGIGAIN	OV8858_REG_16BIT(0x350a)
 #define OV8858_LONG_DIGIGAIN_H_MASK	0x3fc0
 #define OV8858_LONG_DIGIGAIN_L_MASK	0x3f
@@ -75,6 +68,17 @@
 #define OV8858_LONG_DIGIGAIN_MIN	0x0
 #define OV8858_LONG_DIGIGAIN_MAX	0x3fff
 #define OV8858_LONG_DIGIGAIN_DEFAULT	0x200
+
+/*
+ * On the 19.2 MHz Yoga Book variant the long digital gain code in 0x350a
+ * is 4 bits wide and is encoded in bits 15:6 of the register value:
+ * 0x100 selects 1x, each 0x40 step adds 0.25x, and 0x3c0 is 3.75x.
+ * Values above 0x3c0 wrap to zero and produce a black frame.
+ */
+#define OV8858_LONG_DIGIGAIN_19M2_MIN		0x100
+#define OV8858_LONG_DIGIGAIN_19M2_MAX		0x3c0
+#define OV8858_LONG_DIGIGAIN_19M2_STEP		0x40
+#define OV8858_LONG_DIGIGAIN_19M2_DEFAULT	0x100
 
 #define OV8858_DIGITAL_GAIN_STEP	1
 
@@ -1579,27 +1583,12 @@ static int ov8858_enable_test_pattern(struct ov8858 *ov8858, u32 pattern)
 
 static int ov8858_set_digital_gain(struct ov8858 *ov8858, u32 gain)
 {
-	u16 long_gain;
-	int ret;
+	u16 long_gain = (gain & OV8858_LONG_DIGIGAIN_L_MASK) |
+			((gain & OV8858_LONG_DIGIGAIN_H_MASK) <<
+			 OV8858_LONG_DIGIGAIN_H_SHIFT);
 
-	if (ov8858->xvclk_rate != OV8858_XVCLK_FREQ_19_2MHZ) {
-		long_gain = (gain & OV8858_LONG_DIGIGAIN_L_MASK) |
-			    ((gain & OV8858_LONG_DIGIGAIN_H_MASK) <<
-			     OV8858_LONG_DIGIGAIN_H_SHIFT);
-
-		return ov8858_write(ov8858, OV8858_REG_LONG_DIGIGAIN,
-				    long_gain, NULL);
-	}
-
-	ret = ov8858_write(ov8858, OV8858_REG_MWB_RED_GAIN, gain, NULL);
-	if (ret)
-		return ret;
-
-	ret = ov8858_write(ov8858, OV8858_REG_MWB_GREEN_GAIN, gain, NULL);
-	if (ret)
-		return ret;
-
-	return ov8858_write(ov8858, OV8858_REG_MWB_BLUE_GAIN, gain, NULL);
+	return ov8858_write(ov8858, OV8858_REG_LONG_DIGIGAIN, long_gain,
+			    NULL);
 }
 
 static int ov8858_set_ctrl(struct v4l2_ctrl *ctrl)
@@ -1765,6 +1754,7 @@ static int ov8858_init_ctrls(struct ov8858 *ov8858)
 	u32 digital_gain_default = OV8858_LONG_DIGIGAIN_DEFAULT;
 	u32 digital_gain_max = OV8858_LONG_DIGIGAIN_MAX;
 	u32 digital_gain_min = OV8858_LONG_DIGIGAIN_MIN;
+	u32 digital_gain_step = OV8858_DIGITAL_GAIN_STEP;
 	s64 exposure_max, vblank_def;
 	unsigned int pixel_rate;
 	struct v4l2_ctrl *ctrl;
@@ -1809,15 +1799,15 @@ static int ov8858_init_ctrls(struct ov8858 *ov8858)
 			  OV8858_LONG_GAIN_STEP, OV8858_LONG_GAIN_DEFAULT);
 
 	if (ov8858->xvclk_rate == OV8858_XVCLK_FREQ_19_2MHZ) {
-		digital_gain_min = OV8858_MWB_GAIN_MIN;
-		digital_gain_max = OV8858_MWB_GAIN_MAX;
-		digital_gain_default = OV8858_MWB_GAIN_DEFAULT;
+		digital_gain_min = OV8858_LONG_DIGIGAIN_19M2_MIN;
+		digital_gain_max = OV8858_LONG_DIGIGAIN_19M2_MAX;
+		digital_gain_step = OV8858_LONG_DIGIGAIN_19M2_STEP;
+		digital_gain_default = OV8858_LONG_DIGIGAIN_19M2_DEFAULT;
 	}
 
 	v4l2_ctrl_new_std(handler, &ov8858_ctrl_ops, V4L2_CID_DIGITAL_GAIN,
 			  digital_gain_min, digital_gain_max,
-			  OV8858_DIGITAL_GAIN_STEP,
-			  digital_gain_default);
+			  digital_gain_step, digital_gain_default);
 
 	v4l2_ctrl_new_std_menu_items(handler, &ov8858_ctrl_ops,
 				     V4L2_CID_TEST_PATTERN,
